@@ -1,0 +1,6 @@
+#!/usr/bin/env -S mise exec -- deno run --allow-read
+import { lint } from "../impl/js/lint.js";
+
+const { out, errors } = lint(Deno.args, (p) => Deno.readTextFileSync(p));
+Deno.stderr.writeSync(new TextEncoder().encode(out.join("\n") + "\n"));
+Deno.exit(errors > 0 ? 1 : 0);

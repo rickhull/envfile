@@ -1,0 +1,108 @@
+# implementations.toml — registry of all linter implementations
+#
+# Fields:
+#   origin   = "base" | "installed" | "mise"   — how the tool is made available
+#   runtime  = "interpreted" | "native"         — execution model
+#   tool     = canonical tool/runtime name
+#   check    = command to verify availability (interpreted: runtime probe; native: toolchain probe)
+#   source   = source file or directory (interpreted scripts only)
+
+["bin/lint.awk"]
+origin  = "base"
+runtime = "interpreted"
+tool    = "awk"
+check   = "awk --version"
+source  = "bin/lint.awk"
+
+["bin/lint.sh"]
+origin  = "base"
+runtime = "interpreted"
+tool    = "sh"
+check   = "sh --version"
+source  = "bin/lint.sh"
+
+["bin/lint.bash"]
+origin  = "base"
+runtime = "interpreted"
+tool    = "bash"
+check   = "bash --version"
+source  = "bin/lint.bash"
+
+["bin/lint.pl"]
+origin  = "base"
+runtime = "interpreted"
+tool    = "perl"
+check   = "perl --version"
+source  = "bin/lint.pl"
+
+["bin/lint.py"]
+origin  = "installed"
+runtime = "interpreted"
+tool    = "python3"
+check   = "python3 --version"
+source  = "bin/lint.py"
+
+["bin/lint.rb"]
+origin  = "installed"
+runtime = "interpreted"
+tool    = "ruby"
+check   = "ruby --version"
+source  = "bin/lint.rb"
+
+["bin/lint.nodejs"]
+origin  = "mise"
+runtime = "interpreted"
+tool    = "node"
+check   = "mise exec -- node --version"
+source  = "impl/js/"
+
+["bin/lint.bun"]
+origin  = "mise"
+runtime = "interpreted"
+tool    = "bun"
+check   = "mise exec -- bun --version"
+source  = "impl/js/"
+
+["bin/lint.deno"]
+origin  = "mise"
+runtime = "interpreted"
+tool    = "deno"
+check   = "mise exec -- deno --version"
+source  = "impl/js/"
+
+["bin/lint.nu"]
+origin  = "mise"
+runtime = "interpreted"
+tool    = "nu"
+check   = "mise exec -- nu --version"
+source  = "bin/lint.nu"
+
+["bin/lint.c"]
+origin  = "installed"
+runtime = "native"
+tool    = "cc"
+check   = "cc --version"
+
+["bin/lint.asm"]
+origin  = "installed"
+runtime = "native"
+tool    = "nasm"
+check   = "nasm --version"
+
+["bin/lint.go"]
+origin  = "mise"
+runtime = "native"
+tool    = "go"
+check   = "mise exec -- go version"
+
+["bin/lint.rs"]
+origin  = "mise"
+runtime = "native"
+tool    = "rust"
+check   = "mise exec -- rustc --version"
+
+["bin/lint.zig"]
+origin  = "mise"
+runtime = "native"
+tool    = "zig"
+check   = "mise exec -- zig version"

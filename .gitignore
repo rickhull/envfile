@@ -1,0 +1,12 @@
+# binaries built via: just build all
+bin/lint.asm
+bin/lint.c
+bin/lint.rs
+bin/lint.zig
+bin/lint.go
+
+# symlink created via: just activate
+bin/lint
+
+# benchmark binary built via: just build::bench
+bin/bench
