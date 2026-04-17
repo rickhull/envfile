@@ -28,7 +28,7 @@ BEGIN {
     checked++
 
     if (!/=/) {
-        printf "%s:%d: %s\n", FILENAME, NR, ERROR_NO_EQUALS > "/dev/stderr"
+        printf "ERROR: (%s:%d) %s\n", FILENAME, NR, ERROR_NO_EQUALS > "/dev/stderr"
         errors++; next
     }
 
@@ -37,25 +37,25 @@ BEGIN {
     v = substr($0, eq + 1)
 
     if (k ~ /^[ \t]/) {
-        printf "%s:%d: %s\n", FILENAME, NR, ERROR_KEY_LEADING_WHITESPACE > "/dev/stderr"
+        printf "ERROR: (%s:%d) %s\n", FILENAME, NR, ERROR_KEY_LEADING_WHITESPACE > "/dev/stderr"
         errors++; next
     }
     if (k ~ /[ \t]$/) {
-        printf "%s:%d: %s\n", FILENAME, NR, ERROR_KEY_TRAILING_WHITESPACE > "/dev/stderr"
+        printf "ERROR: (%s:%d) %s\n", FILENAME, NR, ERROR_KEY_TRAILING_WHITESPACE > "/dev/stderr"
         errors++; next
     }
     if (v ~ /^[ \t]/) {
-        printf "%s:%d: %s\n", FILENAME, NR, ERROR_VALUE_LEADING_WHITESPACE > "/dev/stderr"
+        printf "ERROR: (%s:%d) %s\n", FILENAME, NR, ERROR_VALUE_LEADING_WHITESPACE > "/dev/stderr"
         errors++; next
     }
 
     if (k !~ /^[A-Za-z_][A-Za-z0-9_]*$/) {
-        printf "%s:%d: " ERROR_KEY_INVALID "\n", FILENAME, NR, k > "/dev/stderr"
+        printf "ERROR: (%s:%d) " ERROR_KEY_INVALID "\n", FILENAME, NR, k > "/dev/stderr"
         errors++; next
     }
 
     if (k != toupper(k)) {
-        printf "%s:%d: " WARN_KEY_NOT_UPPERCASE "\n", FILENAME, NR, k > "/dev/stderr"
+        printf "WARNING: (%s:%d) " WARN_KEY_NOT_UPPERCASE "\n", FILENAME, NR, k > "/dev/stderr"
         warnings++
     }
 
@@ -68,29 +68,29 @@ BEGIN {
         rest = substr(v, 2)
         pos = index(rest, "\"")
         if (pos == 0) {
-            printf "%s:%d: %s\n", FILENAME, NR, ERROR_DOUBLE_QUOTE_UNTERMINATED > "/dev/stderr"
+            printf "ERROR: (%s:%d) %s\n", FILENAME, NR, ERROR_DOUBLE_QUOTE_UNTERMINATED > "/dev/stderr"
             errors++; next
         }
         after = substr(rest, pos + 1)
         if (length(after) > 0) {
-            printf "%s:%d: %s\n", FILENAME, NR, ERROR_TRAILING_CONTENT > "/dev/stderr"
+            printf "ERROR: (%s:%d) %s\n", FILENAME, NR, ERROR_TRAILING_CONTENT > "/dev/stderr"
             errors++; next
         }
     } else if (c == "'") {
         rest = substr(v, 2)
         pos = index(rest, "'")
         if (pos == 0) {
-            printf "%s:%d: %s\n", FILENAME, NR, ERROR_SINGLE_QUOTE_UNTERMINATED > "/dev/stderr"
+            printf "ERROR: (%s:%d) %s\n", FILENAME, NR, ERROR_SINGLE_QUOTE_UNTERMINATED > "/dev/stderr"
             errors++; next
         }
         after = substr(rest, pos + 1)
         if (length(after) > 0) {
-            printf "%s:%d: %s\n", FILENAME, NR, ERROR_TRAILING_CONTENT > "/dev/stderr"
+            printf "ERROR: (%s:%d) %s\n", FILENAME, NR, ERROR_TRAILING_CONTENT > "/dev/stderr"
             errors++; next
         }
     } else {
         if (v ~ /[ \t'"\\]/) {
-            printf "%s:%d: %s\n", FILENAME, NR, ERROR_VALUE_INVALID_CHAR > "/dev/stderr"
+            printf "ERROR: (%s:%d) %s\n", FILENAME, NR, ERROR_VALUE_INVALID_CHAR > "/dev/stderr"
             errors++; next
         }
     }

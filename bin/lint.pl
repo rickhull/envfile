@@ -18,13 +18,13 @@ my ($checked, $errors, $warnings) = (0, 0, 0);
 
 sub error {
     my ($msg) = @_;
-    warn "$ARGV:$.: $msg\n";
+    warn "ERROR: ($ARGV:$.) $msg\n";
     $errors++;
 }
 
 sub warning {
     my ($msg) = @_;
-    warn "$ARGV:$.: $msg\n";
+    warn "WARNING: ($ARGV:$.) $msg\n";
     $warnings++;
 }
 

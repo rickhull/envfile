@@ -33,7 +33,7 @@ def main [...files: string] {
       $checked += 1
 
       if not ($line | str contains '=') {
-        print -e ($f + ":" + ($n | into string) + ": " + $ERROR_NO_EQUALS)
+        print -e ("ERROR: (" + $f + ":" + ($n | into string) + ") " + $ERROR_NO_EQUALS)
         $errors += 1
         continue
       }
@@ -43,29 +43,29 @@ def main [...files: string] {
       let v = ($line | str substring ($eq_idx + 1)..)
 
       if (($k | str starts-with ' ') or ($k | str starts-with "\t")) {
-        print -e ($f + ":" + ($n | into string) + ": " + $ERROR_KEY_LEADING_WHITESPACE)
+        print -e ("ERROR: (" + $f + ":" + ($n | into string) + ") " + $ERROR_KEY_LEADING_WHITESPACE)
         $errors += 1
         continue
       }
       if (($k | str ends-with ' ') or ($k | str ends-with "\t")) {
-        print -e ($f + ":" + ($n | into string) + ": " + $ERROR_KEY_TRAILING_WHITESPACE)
+        print -e ("ERROR: (" + $f + ":" + ($n | into string) + ") " + $ERROR_KEY_TRAILING_WHITESPACE)
         $errors += 1
         continue
       }
       if ($v | str length) > 0 and (($v | str starts-with ' ') or ($v | str starts-with "\t")) {
-        print -e ($f + ":" + ($n | into string) + ": " + $ERROR_VALUE_LEADING_WHITESPACE)
+        print -e ("ERROR: (" + $f + ":" + ($n | into string) + ") " + $ERROR_VALUE_LEADING_WHITESPACE)
         $errors += 1
         continue
       }
       let first_ok = (not ($k | str substring 0..<1 | parse --regex "[A-Za-z_]" | is-empty))
       let rest_ok = (($k | str substring 1.. | split chars | all {|c| not ($c | parse --regex "[A-Za-z0-9_]" | is-empty) }) or ($k | str length) == 1)
       if not ($first_ok and $rest_ok) {
-        print -e ($f + ":" + ($n | into string) + ": " + $ERROR_KEY_INVALID + " '" + $k + "'")
+        print -e ("ERROR: (" + $f + ":" + ($n | into string) + ") " + $ERROR_KEY_INVALID + " '" + $k + "'")
         $errors += 1
         continue
       }
       if ($k | str upcase) != $k {
-        print -e ($f + ":" + ($n | into string) + ": key '" + $k + "' " + $WARN_KEY_NOT_UPPERCASE)
+        print -e ("WARNING: (" + $f + ":" + ($n | into string) + ") key '" + $k + "' " + $WARN_KEY_NOT_UPPERCASE)
         $warnings += 1
       }
 
@@ -77,13 +77,13 @@ def main [...files: string] {
         let rest = ($v | str substring 1..)
         let pos = ($rest | str index-of '"')
         if $pos == -1 {
-          print -e ($f + ":" + ($n | into string) + ": " + $ERROR_DOUBLE_QUOTE_UNTERMINATED)
+          print -e ("ERROR: (" + $f + ":" + ($n | into string) + ") " + $ERROR_DOUBLE_QUOTE_UNTERMINATED)
           $errors += 1
           continue
         }
         let after = ($rest | str substring ($pos + 1)..)
         if ($after | str length) > 0 {
-          print -e ($f + ":" + ($n | into string) + ": " + $ERROR_TRAILING_CONTENT)
+          print -e ("ERROR: (" + $f + ":" + ($n | into string) + ") " + $ERROR_TRAILING_CONTENT)
           $errors += 1
           continue
         }
@@ -91,20 +91,20 @@ def main [...files: string] {
         let rest = ($v | str substring 1..)
         let pos = ($rest | str index-of "'")
         if $pos == -1 {
-          print -e ($f + ":" + ($n | into string) + ": " + $ERROR_SINGLE_QUOTE_UNTERMINATED)
+          print -e ("ERROR: (" + $f + ":" + ($n | into string) + ") " + $ERROR_SINGLE_QUOTE_UNTERMINATED)
           $errors += 1
           continue
         }
         let after = ($rest | str substring ($pos + 1)..)
         if ($after | str length) > 0 {
-          print -e ($f + ":" + ($n | into string) + ": " + $ERROR_TRAILING_CONTENT)
+          print -e ("ERROR: (" + $f + ":" + ($n | into string) + ") " + $ERROR_TRAILING_CONTENT)
           $errors += 1
           continue
         }
       } else {
         let has_bad = ($v | str contains ' ') or ($v | str contains "'") or ($v | str contains '"') or ($v | str contains "\u{5c}")  # \u{5c} = backslash; nu has no unambiguous backslash literal
         if ($v | str length) > 0 and $has_bad {
-          print -e ($f + ":" + ($n | into string) + ": " + $ERROR_VALUE_INVALID_CHAR)
+          print -e ("ERROR: (" + $f + ":" + ($n | into string) + ") " + $ERROR_VALUE_INVALID_CHAR)
           $errors += 1
           continue
         }

@@ -110,15 +110,14 @@ module EnvFile
 
     def error msg
       @errors += 1
-      # TODO: new format, shown below
-      #@io.puts format("ERROR: (%s:%i) %s", @path, @cursor, msg)
-      @io.puts format("%s:%i: %s", @path, @cursor, msg)
+      @io.puts format("ERROR: (%s:%i) %s", @path, @cursor, msg)
+      #@io.puts format("%s:%i: %s", @path, @cursor, msg)
     end
 
     def warning msg
       @warnings += 1
-      #@io.puts format("WARNING: (%s:%i) %s", @path, @cursor, msg)
-      @io.puts format("%s:%i: %s", @path, @cursor, msg)
+      @io.puts format("WARNING: (%s:%i) %s", @path, @cursor, msg)
+      #@io.puts format("%s:%i: %s", @path, @cursor, msg)
     end
   end
 end

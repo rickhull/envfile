@@ -1,99 +1,79 @@
 set shell := ["bash", "-cu"]
 
-# Interpreted linter extensions managed by activate/deactivate
-interpreted := "awk sh bash pl py rb nu nodejs bun deno"
+# Adjust process scheduling for more accurate benchmarks
+mod bench
 
 # Build native binaries: go, zig, all, clean (etc)
 mod build
 
+# Corpus mining: find, collect
+mod corpus
+
+default:
+  @just --list
+  just --list bench
+  just --list build
+  just --list corpus  
+
 # Sets available linters to executable; ensures we have bin/bench
 activate: ensure-bench
-  #!/usr/bin/env perl
-  use strict; use warnings;
+  #!/usr/bin/env python3
+  import os, subprocess, tomllib
 
-  my @impls = (
-    [ "bin/lint.awk",    "awk",              "awk --version"              ],
-    [ "bin/lint.sh",     "sh",               "sh --version"               ],
-    [ "bin/lint.bash",   "bash",             "bash --version"             ],
-    [ "bin/lint.pl",     "perl",             "perl --version"             ],
-    [ "bin/lint.py",     "python3",          "python3 --version"          ],
-    [ "bin/lint.rb",     "ruby",             "ruby --version"             ],
-    [ "bin/lint.nu",     "nu (mise)",        "mise exec -- nu --version"  ],
-    [ "bin/lint.nodejs", "node (mise)",      "mise exec -- node --version"],
-    [ "bin/lint.bun",    "bun (mise)",       "mise exec -- bun --version" ],
-    [ "bin/lint.deno",   "deno (mise)",      "mise exec -- deno --version"],
-  );
+  with open("implementations.toml", "rb") as f:
+    impls = tomllib.load(f)
 
-  for my $row (@impls) {
-    my ($impl, $runtime, $check) = @$row;
-    next unless -f $impl;
-    if (system("$check >/dev/null 2>&1") == 0) {
-      chmod 0755, $impl;
-      print "activated: $impl\n";
-    } else {
-      chmod 0644, $impl;
-      print "skipped:   $impl ($runtime not available)\n";
-    }
-  }
+  for path, meta in impls.items():
+    if meta.get("runtime") != "interpreted":
+      continue
+    if not os.path.isfile(path):
+      continue
+    check = meta["check"]
+    available = subprocess.run(check, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
+    if available:
+      os.chmod(path, 0o755)
+      print(f"activated: {path}")
+    else:
+      os.chmod(path, 0o644)
+      print(f"skipped:   {path} ({meta['tool']} not available)")
 
   # Symlink bin/lint to best available reference impl
-  unlink "bin/lint" if -e "bin/lint" or -l "bin/lint";
-  for my $candidate (qw(bin/lint.awk bin/lint.pl bin/lint.bash bin/lint.sh)) {
-    if (-x $candidate) {
-      (my $target = $candidate) =~ s{^bin/}{};
-      symlink $target, "bin/lint" or die "symlink: $!\n";
-      print "symlinked: bin/lint -> $target\n";
-      last;
-    }
-  }
+  priority = ["bin/lint.awk", "bin/lint.pl", "bin/lint.bash", "bin/lint.sh"]
+  link = "bin/lint"
+  if os.path.exists(link) or os.path.islink(link):
+    os.unlink(link)
+  for candidate in priority:
+    if os.access(candidate, os.X_OK):
+      target = os.path.basename(candidate)
+      os.symlink(target, link)
+      print(f"symlinked: {link} -> {target}")
+      break
 
 # Restores pre-activation state (executable bit, symlinks)
 deactivate:
-  #!/usr/bin/env perl
-  use strict; use warnings;
+  #!/usr/bin/env python3
+  import os, tomllib
 
-  my %ok = map { $_ => 1 } split ' ', '{{interpreted}}';
+  with open("implementations.toml", "rb") as f:
+    impls = tomllib.load(f)
 
-  for my $impl (sort glob "bin/lint.*") {
-    my ($ext) = $impl =~ /\.([^.]+)$/;
-    next unless defined $ext && $ok{$ext};
-    chmod 0644, $impl;
-    print "deactivated: $impl\n";
-  }
+  for path, meta in impls.items():
+    if meta.get("runtime") != "interpreted":
+      continue
+    if not os.path.isfile(path):
+      continue
+    os.chmod(path, 0o644)
+    print(f"deactivated: {path}")
 
-  unlink "bin/lint" and print "removed: bin/lint\n" if -e "bin/lint" or -l "bin/lint";
+  link = "bin/lint"
+  if os.path.exists(link) or os.path.islink(link):
+    os.unlink(link)
+    print(f"removed: {link}")
 
-  if (-l "bin/bench" and readlink("bin/bench") eq "pybench") {
-    unlink "bin/bench" and print "removed: bin/bench -> pybench\n";
-  }
-
-# Set CPU governor to performance and disable turbo boost (run as root / with sudo or run0)
-bench-setup:
-  #!/usr/bin/env bash
-  for gov in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do
-    echo performance > "$gov"
-  done
-  echo "governors set to performance"
-  if [[ -f /sys/devices/system/cpu/intel_pstate/no_turbo ]]; then
-    echo 1 > /sys/devices/system/cpu/intel_pstate/no_turbo
-    echo "intel turbo disabled"
-  fi
-
-# Restore CPU governor to powersave and re-enable turbo boost (run0 / sudo)
-bench-teardown:
-  #!/usr/bin/env bash
-  for gov in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do
-    echo powersave > "$gov"
-  done
-  echo "governors restored to powersave"
-  if [[ -f /sys/devices/system/cpu/intel_pstate/no_turbo ]]; then
-    echo 0 > /sys/devices/system/cpu/intel_pstate/no_turbo
-    echo "intel turbo enabled"
-  fi
-
-# Run bench with elevated privileges (run0 / sudo)
-bench-please:
-  sudo chrt -f 99 taskset -c 0 nice -n -20 bin/bench
+  bench = "bin/bench"
+  if os.path.islink(bench) and os.readlink(bench) == "pybench":
+    os.unlink(bench)
+    print(f"removed: {bench} -> pybench")
 
 # Generate reference outputs from the activated reference implementation
 generate-reference: activated
@@ -101,6 +81,7 @@ generate-reference: activated
   bin/lint spec/rejected.env > spec/rejected.txt 2>&1 || true
   bin/lint spec/warning.env > spec/warning.txt 2>&1
   bin/lint spec/windows.env > spec/windows.txt 2>&1 || true
+  bin/lint spec/combined.env > spec/combined.txt 2>&1 || true
 
 # Verify impls match reference output (default: all)
 verify *args:
@@ -120,7 +101,7 @@ do_verify impl:
   #!/usr/bin/env bash
   set -uo pipefail
   ok=1
-  for f in accepted rejected warning windows; do
+  for f in accepted rejected warning windows combined; do
     got=$({{impl}} spec/${f}.env 2>&1 || true)
     ref=$(cat spec/${f}.txt)
     if [[ "$got" != "$ref" ]]; then
@@ -132,6 +113,103 @@ do_verify impl:
     fi
   done
   [[ $ok -eq 1 ]]
+
+# Verify bash agrees on key=value pairs for spec files
+verify-bash:
+  #!/usr/bin/env python3
+  import subprocess, sys
+
+  def parse_envfile(path):
+    """Return {key: value} for valid-looking assignments; skip blanks and comments."""
+    result = {}
+    with open(path) as f:
+      for line in f:
+        line = line.rstrip("\n")
+        if not line or line.startswith("#"):
+          continue
+        if "=" not in line:
+          continue
+        key, _, value = line.partition("=")
+        if key != key.strip():
+          continue
+        if value.startswith(("'", '"')):
+          value = value[1:-1]
+        result[key] = value
+    return result
+
+  def bash_env(path):
+    """Source path in bash and return the resulting env as a dict."""
+    result = subprocess.run(
+      ["bash", "-c", f"set -a; source {path}; set +a; env"],
+      capture_output=True, text=True
+    )
+    env = {}
+    for line in result.stdout.splitlines():
+      k, _, v = line.partition("=")
+      env[k] = v
+    return env, result.returncode, result.stderr
+
+  def check_values(label, path, keys):
+    """For each key, verify bash agrees on the value. Returns True if all ok."""
+    expected = parse_envfile(path)
+    env, _, _ = bash_env(path)
+    ok = True
+    for key in sorted(keys):
+      exp = expected[key]
+      got = env.get(key, "<missing>")
+      if got != exp:
+        print(f"FAIL [{label}]: {key}")
+        print(f"  expected: {exp!r}")
+        print(f"  bash got: {got!r}")
+        ok = False
+      else:
+        print(f"ok   [{label}]: {key}={exp!r}")
+    return ok
+
+  overall = True
+
+  # accepted.env — all keys; bash must agree on every value
+  accepted = parse_envfile("spec/accepted.env")
+  overall &= check_values("accepted", "spec/accepted.env", accepted.keys())
+
+  # warning.env — all keys; warnings don't affect value correctness
+  warning = parse_envfile("spec/warning.env")
+  overall &= check_values("warning ", "spec/warning.env", warning.keys())
+
+  # combined.env — only keys on lines with no errors (determined by bin/lint output)
+  lint = subprocess.run(["bin/lint", "spec/combined.env"], capture_output=True, text=True)
+  error_lines = set()
+  for line in lint.stderr.splitlines():
+    if not line.startswith("ERROR: ("):
+      continue
+    loc = line[len("ERROR: ("):line.index(")")]
+    _, _, lineno = loc.rpartition(":")
+    if lineno.isdigit():
+      error_lines.add(int(lineno))
+  combined_all = parse_envfile("spec/combined.env")
+  # Re-parse with line numbers to exclude error lines
+  valid_combined = {}
+  with open("spec/combined.env") as f:
+    for lineno, line in enumerate(f, 1):
+      line = line.rstrip("\n")
+      if not line or line.startswith("#") or "=" not in line:
+        continue
+      key, _, value = line.partition("=")
+      if lineno not in error_lines and key == key.strip():
+        if value.startswith(("'", '"')):
+          value = value[1:-1]
+        valid_combined[key] = value
+  overall &= check_values("combined", "spec/combined.env", valid_combined.keys())
+
+  # rejected.env — bash must emit errors (stderr non-empty)
+  _, rc, stderr = bash_env("spec/rejected.env")
+  if stderr.strip():
+    print(f"ok   [rejected]: bash emitted errors (as expected)")
+  else:
+    print(f"FAIL [rejected]: bash sourced rejected.env with no errors")
+    overall = False
+
+  sys.exit(0 if overall else 1)
 
 [private]
 @activated:

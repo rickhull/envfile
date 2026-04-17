@@ -1,23 +1,23 @@
-spec/rejected.env:4: invalid key '123_BAD'
-spec/rejected.env:5: missing assignment (=)
-spec/rejected.env:6: invalid key 'export FOO'
-spec/rejected.env:7: whitespace before =
-spec/rejected.env:8: invalid key 'has space'
-spec/rejected.env:9: invalid key '-hasdash'
-spec/rejected.env:10: invalid key ''
-spec/rejected.env:11: leading whitespace before key
-spec/rejected.env:12: unterminated double quote
-spec/rejected.env:13: unterminated single quote
-spec/rejected.env:14: trailing content after closing quote
-spec/rejected.env:15: trailing content after closing quote
-spec/rejected.env:16: whitespace after =
-spec/rejected.env:17: value contains whitespace, quote, or backslash
-spec/rejected.env:18: value contains whitespace, quote, or backslash
-spec/rejected.env:19: value contains whitespace, quote, or backslash
-spec/rejected.env:20: value contains whitespace, quote, or backslash
-spec/rejected.env:23: value contains whitespace, quote, or backslash
-spec/rejected.env:24: leading whitespace before key
-spec/rejected.env:25: value contains whitespace, quote, or backslash
-spec/rejected.env:26: value contains whitespace, quote, or backslash
-spec/rejected.env:27: value contains whitespace, quote, or backslash
-23 checked, 22 errors, 0 warnings
+ERROR: (spec/rejected.env:3) invalid key '123_BAD'
+ERROR: (spec/rejected.env:4) missing assignment (=)
+ERROR: (spec/rejected.env:5) invalid key 'export FOO'
+ERROR: (spec/rejected.env:6) whitespace before =
+ERROR: (spec/rejected.env:7) invalid key 'has space'
+ERROR: (spec/rejected.env:8) invalid key '-hasdash'
+ERROR: (spec/rejected.env:9) invalid key ''
+ERROR: (spec/rejected.env:10) leading whitespace before key
+ERROR: (spec/rejected.env:11) unterminated double quote
+ERROR: (spec/rejected.env:12) unterminated single quote
+ERROR: (spec/rejected.env:13) trailing content after closing quote
+ERROR: (spec/rejected.env:14) trailing content after closing quote
+ERROR: (spec/rejected.env:15) whitespace after =
+ERROR: (spec/rejected.env:16) value contains whitespace, quote, or backslash
+ERROR: (spec/rejected.env:17) value contains whitespace, quote, or backslash
+ERROR: (spec/rejected.env:18) value contains whitespace, quote, or backslash
+ERROR: (spec/rejected.env:19) value contains whitespace, quote, or backslash
+ERROR: (spec/rejected.env:22) value contains whitespace, quote, or backslash
+ERROR: (spec/rejected.env:23) leading whitespace before key
+ERROR: (spec/rejected.env:24) value contains whitespace, quote, or backslash
+ERROR: (spec/rejected.env:25) value contains whitespace, quote, or backslash
+ERROR: (spec/rejected.env:26) value contains whitespace, quote, or backslash
+22 checked, 22 errors, 0 warnings

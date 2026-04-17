@@ -77,7 +77,7 @@ for f in "$@"; do
     case "$line" in
       *=*) : ;;
       *)
-        echo "$f:$line_num: $ERROR_NO_EQUALS" >&2
+        echo "ERROR: ($f:$line_num) $ERROR_NO_EQUALS" >&2
         errors=$(( errors + 1 )); continue ;;
     esac
 
@@ -85,27 +85,27 @@ for f in "$@"; do
     v="${line#*=}"
 
     if has_leading_ws "$k"; then
-      echo "$f:$line_num: $ERROR_KEY_LEADING_WHITESPACE" >&2
+      echo "ERROR: ($f:$line_num) $ERROR_KEY_LEADING_WHITESPACE" >&2
       errors=$(( errors + 1 )); continue
     fi
 
     if has_trailing_ws "$k"; then
-      echo "$f:$line_num: $ERROR_KEY_TRAILING_WHITESPACE" >&2
+      echo "ERROR: ($f:$line_num) $ERROR_KEY_TRAILING_WHITESPACE" >&2
       errors=$(( errors + 1 )); continue
     fi
 
     if [ -n "$v" ] && has_leading_ws "$v"; then
-      echo "$f:$line_num: $ERROR_VALUE_LEADING_WHITESPACE" >&2
+      echo "ERROR: ($f:$line_num) $ERROR_VALUE_LEADING_WHITESPACE" >&2
       errors=$(( errors + 1 )); continue
     fi
 
     if ! valid_key "$k"; then
-      echo "$f:$line_num: $ERROR_KEY_INVALID '$k'" >&2
+      echo "ERROR: ($f:$line_num) $ERROR_KEY_INVALID '$k'" >&2
       errors=$(( errors + 1 )); continue
     fi
 
     if ! is_upper "$k"; then
-      echo "$f:$line_num: key '$k' $WARN_KEY_NOT_UPPERCASE" >&2
+      echo "WARNING: ($f:$line_num) key '$k' $WARN_KEY_NOT_UPPERCASE" >&2
       warnings=$(( warnings + 1 ))
     fi
 
@@ -120,11 +120,11 @@ for f in "$@"; do
           *'"'*)
             after="${rest#*\"}"
             if [ -n "$after" ]; then
-              echo "$f:$line_num: $ERROR_TRAILING_CONTENT" >&2
+              echo "ERROR: ($f:$line_num) $ERROR_TRAILING_CONTENT" >&2
               errors=$(( errors + 1 )); continue
             fi ;;
           *)
-            echo "$f:$line_num: $ERROR_DOUBLE_QUOTE_UNTERMINATED" >&2
+            echo "ERROR: ($f:$line_num) $ERROR_DOUBLE_QUOTE_UNTERMINATED" >&2
             errors=$(( errors + 1 )); continue ;;
         esac ;;
       "'")
@@ -133,16 +133,16 @@ for f in "$@"; do
           *"'"*)
             after="${rest#*\'}"
             if [ -n "$after" ]; then
-              echo "$f:$line_num: $ERROR_TRAILING_CONTENT" >&2
+              echo "ERROR: ($f:$line_num) $ERROR_TRAILING_CONTENT" >&2
               errors=$(( errors + 1 )); continue
             fi ;;
           *)
-            echo "$f:$line_num: $ERROR_SINGLE_QUOTE_UNTERMINATED" >&2
+            echo "ERROR: ($f:$line_num) $ERROR_SINGLE_QUOTE_UNTERMINATED" >&2
             errors=$(( errors + 1 )); continue ;;
         esac ;;
       *)
         if has_bad_unquoted "$v"; then
-          echo "$f:$line_num: $ERROR_VALUE_INVALID_CHAR" >&2
+          echo "ERROR: ($f:$line_num) $ERROR_VALUE_INVALID_CHAR" >&2
           errors=$(( errors + 1 )); continue
         fi ;;
     esac

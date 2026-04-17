@@ -36,12 +36,12 @@ def _lint_file(f, out):
 
     def error(n, msg):
         nonlocal errors
-        print(f"{f}:{n}: {msg}", file=out)
+        print(f"ERROR: ({f}:{n}) {msg}", file=out)
         errors += 1
 
     def warning(n, msg):
         nonlocal warnings
-        print(f"{f}:{n}: {msg}", file=out)
+        print(f"WARNING: ({f}:{n}) {msg}", file=out)
         warnings += 1
 
     with open(f) as fh:

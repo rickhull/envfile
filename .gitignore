@@ -10,3 +10,6 @@ bin/lint
 
 # benchmark binary built via: just build::bench
 bin/bench
+
+# temporary corpus generation files
+corpus/*.txt

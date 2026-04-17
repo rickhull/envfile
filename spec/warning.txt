@@ -1,4 +1,4 @@
-spec/warning.env:3: key 'lowercase' is not UPPERCASE (preferred)
-spec/warning.env:4: key 'mixedCase' is not UPPERCASE (preferred)
-spec/warning.env:5: key '_under_score' is not UPPERCASE (preferred)
+WARNING: (spec/warning.env:3) key 'lowercase' is not UPPERCASE (preferred)
+WARNING: (spec/warning.env:4) key 'mixedCase' is not UPPERCASE (preferred)
+WARNING: (spec/warning.env:5) key '_under_score' is not UPPERCASE (preferred)
 3 checked, 0 errors, 3 warnings

@@ -18,8 +18,8 @@ function lintLines(path, lines) {
   let checked = 0, errors = 0, warnings = 0;
   const out = [];
 
-  const error   = (n, msg) => { out.push(`${path}:${n}: ${msg}`); errors++; };
-  const warning = (n, msg) => { out.push(`${path}:${n}: ${msg}`); warnings++; };
+  const error   = (n, msg) => { out.push(`ERROR: (${path}:${n}) ${msg}`); errors++; };
+  const warning = (n, msg) => { out.push(`WARNING: (${path}:${n}) ${msg}`); warnings++; };
 
   for (let i = 0; i < lines.length; i++) {
     const n = i + 1;

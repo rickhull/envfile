@@ -35,28 +35,28 @@ for f in "$@"; do
     (( checked++ )) || true
 
     if [[ "$line" != *"="* ]]; then
-      echo "$f:$line_num: $ERROR_NO_EQUALS" >&2; (( errors++ )) || true; continue
+      echo "ERROR: ($f:$line_num) $ERROR_NO_EQUALS" >&2; (( errors++ )) || true; continue
     fi
 
     k="${line%%=*}"
     v="${line#*=}"
 
     if [[ "$k" != "${k#"${k%%[![:space:]]*}"}" ]]; then
-      echo "$f:$line_num: $ERROR_KEY_LEADING_WHITESPACE" >&2; (( errors++ )) || true; continue
+      echo "ERROR: ($f:$line_num) $ERROR_KEY_LEADING_WHITESPACE" >&2; (( errors++ )) || true; continue
     fi
     k_trailing="${k%"${k##*[![:space:]]}"}"
     if [[ "$k" != "$k_trailing" ]]; then
-      echo "$f:$line_num: $ERROR_KEY_TRAILING_WHITESPACE" >&2; (( errors++ )) || true; continue
+      echo "ERROR: ($f:$line_num) $ERROR_KEY_TRAILING_WHITESPACE" >&2; (( errors++ )) || true; continue
     fi
     v_leading="${v#"${v%%[![:space:]]*}"}"
     if [[ "$v" != "$v_leading" && -n "$v" ]]; then
-      echo "$f:$line_num: $ERROR_VALUE_LEADING_WHITESPACE" >&2; (( errors++ )) || true; continue
+      echo "ERROR: ($f:$line_num) $ERROR_VALUE_LEADING_WHITESPACE" >&2; (( errors++ )) || true; continue
     fi
     if [[ ! "$k" =~ $key_re ]]; then
-      echo "$f:$line_num: $ERROR_KEY_INVALID '$k'" >&2; (( errors++ )) || true; continue
+      echo "ERROR: ($f:$line_num) $ERROR_KEY_INVALID '$k'" >&2; (( errors++ )) || true; continue
     fi
     if [[ "$k" != "${k^^*}" ]]; then
-      echo "$f:$line_num: key '$k' $WARN_KEY_NOT_UPPERCASE" >&2; (( warnings++ )) || true
+      echo "WARNING: ($f:$line_num) key '$k' $WARN_KEY_NOT_UPPERCASE" >&2; (( warnings++ )) || true
     fi
 
     if [[ -z "$v" ]]; then
@@ -67,26 +67,26 @@ for f in "$@"; do
     if [[ "$c" == '"' ]]; then
       rest="${v:1}"
       if [[ "$rest" != *'"'* ]]; then
-        echo "$f:$line_num: $ERROR_DOUBLE_QUOTE_UNTERMINATED" >&2; (( errors++ )) || true; continue
+        echo "ERROR: ($f:$line_num) $ERROR_DOUBLE_QUOTE_UNTERMINATED" >&2; (( errors++ )) || true; continue
       fi
       after="${rest#*\"}"
       if [[ -n "$after" ]]; then
-        echo "$f:$line_num: $ERROR_TRAILING_CONTENT" >&2; (( errors++ )) || true; continue
+        echo "ERROR: ($f:$line_num) $ERROR_TRAILING_CONTENT" >&2; (( errors++ )) || true; continue
       fi
     elif [[ "$c" == "'" ]]; then
       rest="${v:1}"
       if [[ "$rest" != *"'"* ]]; then
-        echo "$f:$line_num: $ERROR_SINGLE_QUOTE_UNTERMINATED" >&2; (( errors++ )) || true; continue
+        echo "ERROR: ($f:$line_num) $ERROR_SINGLE_QUOTE_UNTERMINATED" >&2; (( errors++ )) || true; continue
       fi
       after="${rest#*\'}"
       if [[ -n "$after" ]]; then
-        echo "$f:$line_num: $ERROR_TRAILING_CONTENT" >&2; (( errors++ )) || true; continue
+        echo "ERROR: ($f:$line_num) $ERROR_TRAILING_CONTENT" >&2; (( errors++ )) || true; continue
       fi
     else
       sq="'"
       bad_val_re="[[:space:]${sq}\"\\\\]"
       if [[ "$v" =~ $bad_val_re ]]; then
-        echo "$f:$line_num: $ERROR_VALUE_INVALID_CHAR" >&2; (( errors++ )) || true; continue
+        echo "ERROR: ($f:$line_num) $ERROR_VALUE_INVALID_CHAR" >&2; (( errors++ )) || true; continue
       fi
     fi
   done < "$f"
