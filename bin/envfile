@@ -1,0 +1,186 @@
+#!/bin/sh
+# envfile — general entry point (POSIX sh)
+
+set -eu
+
+script_dir=$(CDPATH= cd "$(dirname "$0")" && pwd)
+
+format=strict
+language=
+action=validate
+
+is_word() {
+  case $1 in
+    [A-Za-z_]*)
+      rest=${1#?}
+      case $rest in
+        *[!A-Za-z0-9_]*) return 1 ;;
+      esac
+      return 0
+      ;;
+  esac
+  return 1
+}
+
+is_language() {
+  case $1 in
+    [A-Za-z0-9]*)
+      case $1 in
+        *[!A-Za-z0-9_.-]*) return 1 ;;
+      esac
+      return 0
+      ;;
+  esac
+  return 1
+}
+
+varname_for() {
+  printf '%s' "$1" | tr '[:lower:].-' '[:upper:]__'
+}
+
+suffix_for() {
+  case $1 in
+    awk|bash|c|go|sh|zig|asm) printf '%s\n' "$1" ;;
+    perl) printf '%s\n' pl ;;
+    python) printf '%s\n' py ;;
+    ruby) printf '%s\n' rb ;;
+    rust) printf '%s\n' rs ;;
+    nushell) printf '%s\n' nu ;;
+    node.js) printf '%s\n' node.js ;;
+    bun.js) printf '%s\n' bun.js ;;
+    deno.js) printf '%s\n' deno.js ;;
+    *) return 1 ;;
+  esac
+}
+
+normalize_language_ok() {
+  case $1 in
+    awk|bash|perl|sh) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+validate_language_ok() {
+  case $1 in
+    awk|bash|perl|sh) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+known_language() {
+  case $1 in
+    awk|bash|c|go|nushell|perl|python|ruby|rust|sh|zig|asm|node.js|bun.js|deno.js) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+choose_impl() {
+  fmt=$1
+  lang=$2
+  act=$3
+
+  if [ -n "$lang" ]; then
+    known_language "$lang" || return 1
+    if [ "$fmt" = native ]; then
+      case $lang in
+        awk|bash|c|go|perl|python|rust|sh|zig) ;;
+        *) return 1 ;;
+      esac
+    elif [ "$act" = normalize ]; then
+      normalize_language_ok "$lang" || return 1
+    else
+      validate_language_ok "$lang" || return 1
+    fi
+    suf=$(suffix_for "$lang") || return 1
+    impl=$script_dir/envfile.$suf
+    [ -x "$impl" ] || return 1
+    printf '%s\n' "$impl"
+    return 0
+  fi
+
+  if [ "$act" = normalize ]; then
+    case $fmt in
+      native) set -- awk c go zig bash sh perl ;;
+      strict|compat) set -- awk perl bash sh ;;
+    esac
+  else
+    case $fmt in
+      native) set -- awk c go zig bash sh perl ;;
+      strict|compat) set -- awk perl bash python sh ;;
+    esac
+  fi
+
+  for lang in "$@"; do
+    suf=$(suffix_for "$lang") || continue
+    impl=$script_dir/envfile.$suf
+    if [ -x "$impl" ]; then
+      printf '%s\n' "$impl"
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+while [ $# -gt 0 ]; do
+  case $1 in
+    format=*)
+      format=${1#format=}
+      is_word "$format" || {
+        printf '%s: invalid format: %s\n' "$0" "$format" >&2
+        exit 1
+      }
+      ;;
+    language=*)
+      language=${1#language=}
+      is_language "$language" || {
+        printf '%s: invalid language: %s\n' "$0" "$language" >&2
+        exit 1
+      }
+      ;;
+    action=*)
+      action=${1#action=}
+      case $action in
+        validate|normalize) ;;
+        *)
+          printf '%s: unsupported action: %s\n' "$0" "$action" >&2
+          exit 1
+          ;;
+      esac
+      ;;
+    [A-Za-z_][A-Za-z0-9_]*=*)
+      printf '%s: unsupported setting: %s\n' "$0" "$1" >&2
+      exit 1
+      ;;
+    *)
+      break
+      ;;
+  esac
+  shift
+done
+
+case $format in
+  strict|native|compat) ;;
+  *)
+    printf '%s: unsupported format: %s\n' "$0" "$format" >&2
+    exit 1
+    ;;
+esac
+
+impl=$(choose_impl "$format" "$language" "$action") || {
+  if [ -n "$language" ]; then
+    printf '%s: unavailable language: %s\n' "$0" "$language" >&2
+  else
+    printf '%s: no strict implementation available\n' "$0" >&2
+  fi
+  exit 1
+}
+
+case $format:$impl in
+  native:*/envfile.awk)
+    exec env LC_ALL=C ENVFILE_FORMAT=$format ENVFILE_ACTION=$action "$impl" "$@"
+    ;;
+  *)
+    exec env ENVFILE_FORMAT=$format ENVFILE_ACTION=$action "$impl" "$@"
+    ;;
+esac

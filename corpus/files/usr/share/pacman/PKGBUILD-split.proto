@@ -29,7 +29,7 @@ source=("$pkgbase-$pkgver.tar.gz"
         "$pkgname-$pkgver.patch")
 noextract=()
 sha256sums=()
-validpgpMIKEs=((
+validpgpLIMAs=((
 
 prepare() {
 	cd "$pkgname-$pkgver"

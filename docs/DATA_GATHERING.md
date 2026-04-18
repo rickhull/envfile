@@ -1,6 +1,6 @@
 # Data gathering — env files from the wild
 
-The goal is a large, diverse corpus of real env files for testing linter
+The goal is a large, diverse corpus of real env files for testing validator
 correctness, measuring real-world error rates, and discovering edge cases
 that synthetic fixtures miss.
 
@@ -147,7 +147,7 @@ synthetic files generated from:
 
 ## Benchmarking use
 
-The current benchmark invokes each linter once per file per iteration,
+The current benchmark invokes each validator once per file per iteration,
 which means startup cost dominates — especially for Ruby, Python, and
 Nushell where runtime initialization is significant. The numbers reflect
 "how fast can you run this tool" more than "how fast is the parsing".
@@ -163,12 +163,12 @@ invocation — a few hundred files is sufficient; a few thousand is better.
 
 The bench script should be updated to support a corpus mode:
 
-```
-python3 bin/bench --corpus spec/corpus/
+```sh
+python3 bin/bench --corpus corpus/files/
 ```
 
-which collects all `.env` files under the corpus directory and passes
-them all to a single linter invocation per iteration.
+which collects all candidate files under the corpus directory and passes
+them all to a single validator invocation per iteration.
 
 ## Privacy and legal
 

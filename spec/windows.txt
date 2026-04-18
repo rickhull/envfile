@@ -1,3 +1,0 @@
-WARNING: (spec/windows.env:6) key 'lowercase' is not UPPERCASE (preferred)
-ERROR: (spec/windows.env:7) missing assignment (=)
-6 checked, 1 errors, 1 warnings

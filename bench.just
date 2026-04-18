@@ -1,4 +1,4 @@
-# Set CPU governor to performance and disable turbo boost (run as root / with sudo or run0)
+# Set CPU governor to performance and disable turbo boost.
 setup:
   #!/usr/bin/env bash
   for gov in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do
@@ -10,7 +10,7 @@ setup:
     echo "intel turbo disabled"
   fi
 
-# Restore CPU governor to powersave and re-enable turbo boost (run0 / sudo)
+# Restore CPU governor to powersave and re-enable turbo boost.
 teardown:
   #!/usr/bin/env bash
   for gov in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do
@@ -22,7 +22,42 @@ teardown:
     echo "intel turbo enabled"
   fi
 
-# Run bench with elevated privileges (run0 / sudo)
-please:
-  chrt -f 99 taskset -c 0 nice -n -20 bin/bench
+# Run the benchmark binary with elevated privileges.
+run *args:
+  chrt -f 99 taskset -c 0 nice -n -20 bin/bench {{args}} || bin/bench {{args}}
 
+# Run strict-format benchmarks.
+strict *args:
+  chrt -f 99 taskset -c 0 nice -n -20 bin/bench format=strict {{args}} || bin/bench format=strict {{args}}
+
+# Run native-format benchmarks.
+native *args:
+  chrt -f 99 taskset -c 0 nice -n -20 bin/bench format=native {{args}} || bin/bench format=native {{args}}
+
+# Run the benchmark over the shared corpus with the default strict format.
+corpus *args:
+  chrt -f 99 taskset -c 0 nice -n -20 bin/bench files=corpus {{args}} || bin/bench files=corpus {{args}}
+
+# Run strict-format benchmarks over the shared corpus.
+strict_corpus *args:
+  chrt -f 99 taskset -c 0 nice -n -20 bin/bench format=strict files=corpus {{args}} || bin/bench format=strict files=corpus {{args}}
+
+# Run native-format benchmarks over the shared corpus.
+native_corpus *args:
+  chrt -f 99 taskset -c 0 nice -n -20 bin/bench format=native files=corpus {{args}} || bin/bench format=native files=corpus {{args}}
+
+# Compare nullscan argv and stdin modes over the shared corpus.
+nullscan:
+  #!/usr/bin/env bash
+  set -euo pipefail
+
+  tmpdir=$(mktemp -d "${TMPDIR:-/tmp}/nullscan-bench.XXXXXX")
+  trap 'rm -rf "$tmpdir"' EXIT
+
+  mapfile -t files < <(find corpus/files -type f | sort)
+  printf '%s\n' "${files[@]}" > "$tmpdir/files"
+
+  bin/nullscan "${files[@]}" > "$tmpdir/argv.out"
+  bin/nullscan < "$tmpdir/files" > "$tmpdir/stdin.out"
+
+  diff -u "$tmpdir/argv.out" "$tmpdir/stdin.out"

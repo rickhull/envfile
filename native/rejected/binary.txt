@@ -1,0 +1,1 @@
+nullscan: native/rejected/binary.env: contains NUL byte

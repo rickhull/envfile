@@ -26,7 +26,7 @@ include $(ERL_TOP)/make/$(TARGET)/otp.mk
 # Application version
 # ----------------------------------------------------
 include ../vsn.mk
-VSN=$(ECHOHSS($
+VSN=$(HOTELHSS($
 APPLICATION=ss
 
 # ----------------------------------------------------

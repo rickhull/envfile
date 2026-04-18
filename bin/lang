@@ -1,0 +1,105 @@
+#!/bin/sh
+# Query tool facts for a language entry in languages.env.
+# Usage:
+#   bin/lang status          -- show all languages and tool availability
+#   bin/lang <lang> [<field>]  -- show fields for one language
+
+set -e
+
+LANGS_ENV="${LANGS_ENV:-$(dirname "$0")/../languages.env}"
+
+if [ $# -lt 1 ] || [ $# -gt 2 ]; then
+  printf 'usage: bin/lang status\n       bin/lang <lang> [<field>]\n' >&2
+  exit 1
+fi
+
+# status: show all languages
+if [ "$1" = "status" ]; then
+  mise_avail=no
+  command -v mise >/dev/null 2>&1 && mise_avail=yes
+
+  printf '%-12s  %-8s  %-4s  %s\n' language status mise tool
+  printf '%-12s  %-8s  %-4s  %s\n' -------- ------ ---- ----
+
+  awk -F= '
+    /^[[:space:]]*$/ { next }
+    {
+      n = index($1, ".")
+      if (n == 0) next
+      lang  = substr($1, 1, n - 1)
+      field = substr($1, n + 1)
+      val   = substr($0, index($0, "=") + 1)
+      if (field == "build" || field == "exec") tool[lang] = val
+      if (field == "mise")                     mise[lang] = val
+    }
+    END { for (lang in tool) print lang, tool[lang], mise[lang] }
+  ' "$LANGS_ENV" | sort | while read -r lang tool mise_flag; do
+    path="$("$0" "$lang" which 2>/dev/null)" || true
+    if [ -n "$path" ]; then
+      status=ok
+    elif [ "$mise_flag" = "available" ] && [ "$mise_avail" = "no" ]; then
+      status="mise?"
+    else
+      status=missing
+    fi
+    mise_col=-
+    [ "$mise_flag" = "available" ] && mise_col=yes
+    printf '%-12s  %-8s  %-4s  %s\n' "$lang" "$status" "$mise_col" "${path:-$tool}"
+  done
+
+  printf '\n'
+  if [ "$mise_avail" = "yes" ]; then
+    printf 'mise: active\n'
+  else
+    printf 'mise: not found  (https://mise.jdx.dev)\n'
+  fi
+  exit 0
+fi
+
+lang="$1"
+field="${2:-}"
+
+eval "$(awk -F= -v lang="$lang" '
+  /^[[:space:]]*$/ { next }
+  index($1, lang ".") == 1 {
+    f = substr($1, length(lang) + 2)
+    v = substr($0, index($0,"=") + 1)
+    gsub(/'\''/, "'\''\\'\'''\''", v)
+    printf "lang_%s='\''%s'\''\n", f, v
+    found = 1
+  }
+  END { if (!found) print "lang__missing=1" }
+' "$LANGS_ENV")"
+
+if [ "${lang__missing:-}" = "1" ]; then
+  printf 'bin/lang: unknown language: %s\n' "$lang" >&2
+  exit 1
+fi
+
+tool="${lang_build:-${lang_exec:-}}"
+
+case "$field" in
+  which|"")
+    path="$(command -v "$tool" 2>/dev/null)" || { [ -n "$field" ] && exit 1 || true; }
+    if [ -z "$field" ]; then
+      awk -F= -v lang="$lang" '
+        /^[[:space:]]*$/ { next }
+        index($1, lang ".") == 1 {
+          printf "%s=%s\n", substr($1, length(lang) + 2), substr($0, index($0,"=") + 1)
+        }
+      ' "$LANGS_ENV"
+      [ -n "$path" ] && printf 'which=%s\n' "$path" || printf 'which=\n'
+    else
+      [ -n "$path" ] && printf '%s\n' "$path" || exit 1
+    fi
+    ;;
+  *)
+    var="lang_${field}"
+    val="$(eval "printf '%s' \"\${${var}:-}\"")"
+    if [ -z "$val" ]; then
+      printf 'bin/lang: no field %s for language: %s\n' "$field" "$lang" >&2
+      exit 1
+    fi
+    printf '%s\n' "$val"
+    ;;
+esac

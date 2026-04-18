@@ -15,7 +15,7 @@ WARMUP_BURN  = 5     # unconditional iters before Welford starts
 WARMUP_MIN_N = 5     # minimum Welford samples before checking CV
 WARMUP_STABLE = 5    # consecutive samples below threshold to declare stable
 CV_THRESHOLD = 0.03  # 3%
-PATTERN      = "bin/lint.*"
+PATTERN      = "bin/envfile.*"
 
 
 def escalate():

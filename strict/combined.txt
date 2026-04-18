@@ -1,0 +1,3 @@
+ERROR_KEY_INVALID: strict/combined.env:5
+ERROR_NO_EQUALS: strict/combined.env:8
+6 checked, 2 errors

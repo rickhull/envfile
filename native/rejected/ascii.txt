@@ -1,0 +1,7 @@
+ERROR_KEY_INVALID: native/rejected/ascii.env:3
+ERROR_NO_EQUALS: native/rejected/ascii.env:4
+ERROR_KEY_INVALID: native/rejected/ascii.env:5
+ERROR_EMPTY_KEY: native/rejected/ascii.env:6
+ERROR_KEY_INVALID: native/rejected/ascii.env:7
+ERROR_KEY_INVALID: native/rejected/ascii.env:8
+6 checked, 6 errors

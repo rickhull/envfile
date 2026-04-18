@@ -1,2 +1,0 @@
-#!/usr/bin/env bash
-exec mise exec -- node "$(dirname "$0")/../impl/js/lint.js.mjs" "$@"

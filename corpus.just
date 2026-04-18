@@ -1,7 +1,6 @@
 set shell := ["bash", "-cu"]
 
 corpus_dir    := "corpus/files"
-scores_file   := "corpus/scores.txt"
 explored_file := "corpus/explored.txt"
 filtered_file := "corpus/filtered.txt"
 max_filesize  := "5K"
@@ -16,57 +15,51 @@ rg_files := "rg --files --no-messages --no-ignore --hidden --one-file-system"
 
 # Collect real-world env files from the local filesystem.
 #
-# Each pipeline composes three stages:
+# Generation composes three stages:
 #   1. explore  — find candidate files (by directory walk, systemd refs, or filename patterns)
 #   2. filter   — lint each candidate, keep those passing size-tiered acceptance thresholds
-#   3. collect  — sanitize sensitive lines, copy to corpus/files/ (chroot layout), score directories
+#   3. collect  — sanitize sensitive lines, copy to corpus/files/ (chroot layout), score source dirs
 #
-# Pipelines can be run individually or combined via `generate`.
+# Explore recipes accumulate into `corpus/explored.txt`; `generate` runs the
+# full pipeline once after all exploration completes.
 
-# Run all pipelines (systemd, shellconf, root)
-generate: systemd root shellconf
+# Run the full corpus pipeline once.
+generate: clean explore_all filter collect
 
-# Pipeline: $HOME
-home:
-  @just corpus explore_home
-  @just corpus filter
-  @just corpus collect
-  mv corpus/scores.txt corpus/home.scores.txt
+# Run every explore stage without building the final corpus tree.
+explore_all: explore_home explore_root explore_systemd explore_shellconf
 
-# Pipeline: root (/)
-root:
-  @just corpus explore_root
-  @just corpus filter
-  @just corpus collect
-  mv corpus/scores.txt corpus/root.scores.txt
+# Alias for exploring `$HOME`.
+home: explore_home
 
-# Pipeline: systemd *.service files: EnvironmentFile=
-systemd:
-  @just corpus explore_systemd
-  @just corpus filter
-  @just corpus collect
-  mv corpus/scores.txt corpus/systemd.scores.txt
+# Alias for exploring the filesystem root.
+root: explore_root
 
-# Pipeline: *conf*.sh filename pattern
-shellconf:
-  @just corpus explore_shellconf
-  @just corpus filter
-  @just corpus collect
-  mv corpus/scores.txt corpus/shellconf.scores.txt
+# Alias for exploring `EnvironmentFile=` references from systemd units.
+systemd: explore_systemd
+
+# Alias for exploring shell config filenames.
+shellconf: explore_shellconf
 
 # --- Explore -----------------------------------------------------------------
 
-# Find candidates under $HOME
+# Reset the staged explore/filter outputs.
+clean-state:
+  rm -f "{{explored_file}}" "{{filtered_file}}"
+
+# Explore files under `$HOME`.
 explore_home: (explore "$HOME")
 
-# Find candidates across the entire filesystem
+# Explore files across the filesystem root.
 explore_root: (explore "/")
 
-# Find candidate env-like files under a directory
+# Explore candidate env-like files under a directory.
 explore dir="/" glob="":
   #!/usr/bin/env bash
   dir="{{dir}}"
   glob="{{glob}}"
+  tmp=$(mktemp)
+  merged=$(mktemp)
 
   {{rg_files}} \
     --max-filesize "{{max_filesize}}" \
@@ -77,16 +70,23 @@ explore dir="/" glob="":
   | rg -vF "$(pwd)/" \
   | sort \
   | xargs -d '\n' rg --no-messages -l '=' \
-  > "{{explored_file}}"
+  > "$tmp"
+
+  cat "{{explored_file}}" "$tmp" 2>/dev/null | sort -u > "$merged"
+  mv "$merged" "{{explored_file}}"
+  rm -f "$tmp"
 
   count=$(wc -l < {{explored_file}})
-  msg="Qualified ${count} files (${dir}) under {{max_filesize}} file size"
+  msg="Accumulated ${count} files after scanning ${dir}"
   printf 'explore:\t%s\n' "$msg"
   printf '\t\tWrote {{explored_file}}\n'
 
-# Find shell config files matching *Conf.sh (case insensitive)
+# Explore shell config files matching `*conf*.sh`.
 explore_shellconf:
   #!/usr/bin/env bash
+  tmp=$(mktemp)
+  merged=$(mktemp)
+
   {{rg_files}} \
     --max-filesize "{{max_filesize}}" \
     --glob-case-insensitive \
@@ -96,14 +96,18 @@ explore_shellconf:
   | rg -i "{{shellconf_patterns}}" \
   | rg -vF "$(pwd)/" \
   | xargs -d '\n' rg --no-messages -l '=' \
-  > "{{explored_file}}"
+  > "$tmp"
+
+  cat "{{explored_file}}" "$tmp" 2>/dev/null | sort -u > "$merged"
+  mv "$merged" "{{explored_file}}"
+  rm -f "$tmp"
 
   count=$(wc -l < {{explored_file}})
-  msg="Qualified ${count} files matching shellconf patterns"
+  msg="Accumulated ${count} files after shellconf scan"
   printf 'explore_shellconf:\t%s\n' "$msg"
   printf '\t\tWrote {{explored_file}}\n'
 
-# Chase EnvironmentFile= refs from systemd unit files
+# Explore `EnvironmentFile=` references from systemd units.
 explore_systemd:
   #!/usr/bin/env python3
   import os, re, subprocess
@@ -154,40 +158,41 @@ explore_systemd:
       seen.add(ref)
       refs.append(ref)
 
+  prior = []
+  if os.path.exists(explored_file):
+    with open(explored_file) as f:
+      prior = [line.rstrip("\n") for line in f if line.strip()]
+
   with open(explored_file, "w") as f:
-    for ref in sorted(refs):
+    for ref in sorted(set(prior) | set(refs)):
       f.write(ref + "\n")
 
-  msg = f"Found {len(units)} unit files, qualified {len(refs)} EnvironmentFile refs"
+  total = sum(1 for _ in open(explored_file))
+  msg = f"Found {len(units)} unit files; accumulated {total} files after systemd refs"
   print(f"explore_systemd:\t{msg}")
   print(f"\t\tWrote {explored_file}")
 
 # --- Filter ------------------------------------------------------------------
 
-# Lint explored files, keep those passing acceptance thresholds
+# Filter explored paths through the strict acceptance linter.
 filter:
   #!/usr/bin/env python3
   import os, re, subprocess, sys
-  from collections import defaultdict
 
   explored_file = "{{explored_file}}"
   filtered_file = "{{filtered_file}}"
 
-  for linter in ("bin/lint.asm", "bin/lint.c", "bin/lint.zig"):
+  for linter in ("bin/envfile.asm", "bin/envfile.c", "bin/envfile.zig"):
     if os.access(linter, os.X_OK):
       break
   else:
-    print("filter: \tno native linter found — run `just build c` or similar", file=sys.stderr)
+    print("filter: \tno native linter found — run `make c` or similar", file=sys.stderr)
     raise SystemExit(1)
 
   summary_re  = re.compile(r"(\d+) checked, (\d+) errors, (\d+) warnings")
   overlay_re  = re.compile(r"overlay/[0-9a-f]{64}/diff(/.*)")
   seen_logical = set()
   accepted = skipped = 0
-
-  def logical_key(path):
-    m = overlay_re.search(path)
-    return m.group(1) if m else path
 
   # Size-tiered acceptance thresholds (applied independently to error and warning rates)
   #   tiny   < 100B : 10% max
@@ -205,8 +210,10 @@ filter:
   with open(explored_file) as inp, open(filtered_file, "w") as out:
     for path in inp:
       path = path.rstrip("\n")
-      key = logical_key(path)
-      if key in seen_logical:
+      if overlay_re.search(path):
+        skipped += 1
+        continue
+      if path in seen_logical:
         skipped += 1
         continue
       r = subprocess.run([linter, path], capture_output=True)
@@ -224,7 +231,7 @@ filter:
       if warnings / checked > max_rate(warn_thresholds, size):
         skipped += 1
         continue
-      seen_logical.add(key)
+      seen_logical.add(path)
       out.write(path + "\n")
       accepted += 1
 
@@ -234,15 +241,13 @@ filter:
 
 # --- Collect ------------------------------------------------------------------
 
-# Sanitize sensitive lines, copy to corpus/files/, score directories
+# Copy accepted files into the sanitized corpus tree.
 collect: &&chown
   #!/usr/bin/env python3
-  import os, re, random, shutil, sys
-  from collections import defaultdict
+  import os, re, random
 
   filtered_file = "{{filtered_file}}"
   dest          = "{{corpus_dir}}"
-  scores_file   = "{{scores_file}}"
 
   BAD_WORDS = ["secret", "private", "token", "key", "ssh", "auth", "passw", "passwd", "cred", "cert", "signing"]
   SUB_WORDS = ["ALPHA", "BRAVO", "CHARLIE", "DELTA", "ECHO", "FOXTROT", "GOLF", "HOTEL", "INDIA", "JULIET", "KILO", "LIMA", "MIKE", "NOVEMBER", "OSCAR", "PAPA", "QUEBEC", "ROMEO", "SIERRA", "TANGO", "UNIFORM", "VICTOR", "WHISKEY", "XRAY", "YANKEE", "ZULU"]
@@ -266,7 +271,6 @@ collect: &&chown
   for root, _, files in os.walk(dest):
     for fn in files:
       seen_sources.add(os.path.join(root, fn))
-  dir_scores = defaultdict(int)
   accepted = 0
 
   import re as _re
@@ -290,35 +294,35 @@ collect: &&chown
       with open(dst, "w") as out:
         out.write(blob)
       seen_sources.add(dst)
-      dir_scores[os.path.dirname(path)] += 1
       accepted += 1
 
-  with open(scores_file, "w") as f:
-    for d, score in sorted(dir_scores.items(), key=lambda x: -x[1]):
-      f.write(f"{score:>5}  {d}\n")
-
   print(f"collect:\tSanitized {accepted} files to {dest}/")
-  msg = f"Scored {len(dir_scores)} dirs"
-  print(f"scores: \t{msg}")
-  print(f"\t\tWrote {scores_file}")
-  overlay_re = re.compile(r"overlay/[0-9a-f]{64}/diff(/.*)")
-  top = sorted(dir_scores.items(), key=lambda x: -x[1])
-  for d, score in top[:5]:
-    if overlay_re.search(d):
+
+# Score corpus directories by file count.
+score:
+  #!/usr/bin/env python3
+  import os
+  from collections import defaultdict
+  dest   = "{{corpus_dir}}"
+  scores = defaultdict(int)
+  for dirpath, _, filenames in os.walk(dest):
+    if not filenames:
       continue
-    print(f"{score:>5}  {d}")
+    rel = os.path.normpath(os.path.relpath(dirpath, dest)) if dirpath != dest else "."
+    scores[rel] += len(filenames)
+  for d, n in sorted(scores.items(), key=lambda x: (-x[1], x[0])):
+    print(f"{n:>5}  {d}")
 
 # --- Housekeeping -------------------------------------------------------------
 
-# Assign corpus file ownership to repo owner / operator
+# Match corpus file ownership to the repository owner.
 chown:
-  @chown -R "$(id -un):$(id -gn)" {{corpus_dir}}/
+  @chown -R "$(stat -c '%U:%G' '{{justfile_directory()}}')" {{corpus_dir}}/
 
-# Remove corpus output files
+# Remove collected corpus files.
 clean-files:
-  rm -f "{{scores_file}}"
   find {{corpus_dir}} -mindepth 1 -delete
 
-# Remove all corpus state (files, scores, explored, filtered)
+# Remove all corpus state, including staged outputs.
 clean: clean-files
   rm -f "{{explored_file}}" "{{filtered_file}}"

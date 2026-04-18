@@ -1,0 +1,23 @@
+ERROR_KEY_INVALID: strict/rejected.env:3
+ERROR_NO_EQUALS: strict/rejected.env:4
+ERROR_KEY_INVALID: strict/rejected.env:5
+ERROR_KEY_TRAILING_WHITESPACE: strict/rejected.env:6
+ERROR_KEY_INVALID: strict/rejected.env:7
+ERROR_KEY_INVALID: strict/rejected.env:8
+ERROR_KEY_INVALID: strict/rejected.env:9
+ERROR_KEY_LEADING_WHITESPACE: strict/rejected.env:10
+ERROR_DOUBLE_QUOTE_UNTERMINATED: strict/rejected.env:11
+ERROR_SINGLE_QUOTE_UNTERMINATED: strict/rejected.env:12
+ERROR_TRAILING_CONTENT: strict/rejected.env:13
+ERROR_TRAILING_CONTENT: strict/rejected.env:14
+ERROR_VALUE_LEADING_WHITESPACE: strict/rejected.env:15
+ERROR_VALUE_INVALID_CHAR: strict/rejected.env:16
+ERROR_VALUE_INVALID_CHAR: strict/rejected.env:17
+ERROR_VALUE_INVALID_CHAR: strict/rejected.env:18
+ERROR_VALUE_INVALID_CHAR: strict/rejected.env:19
+ERROR_VALUE_INVALID_CHAR: strict/rejected.env:22
+ERROR_KEY_LEADING_WHITESPACE: strict/rejected.env:23
+ERROR_VALUE_INVALID_CHAR: strict/rejected.env:24
+ERROR_VALUE_INVALID_CHAR: strict/rejected.env:25
+ERROR_VALUE_INVALID_CHAR: strict/rejected.env:26
+22 checked, 22 errors

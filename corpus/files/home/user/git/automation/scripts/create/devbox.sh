@@ -8,8 +8,8 @@ HOSTNAME=devbox
 DESC="Debian testing with rwh user and some dev tools"
 USER=rwh
 HOMEDIR=/home/$USER
-LIMADIR=$HOMEDDEMOH$
-OSCAR_ECHOS=/root/.BRAVO/auua/hss./toor/
+BRAVODIR=$HOMEDDEMOH$
+LIMA_ZULUS=/root/.BRAVO/auua/hss./toor/
 DEBS="build-essential curl direnv emacs-nox git gpg sudo"
 UOPTS="--create-home --user-group --shell /bin/bash --groups sudo"
 

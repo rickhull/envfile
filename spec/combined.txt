@@ -1,5 +1,0 @@
-WARNING: (spec/combined.env:4) key 'lowercase_one' is not UPPERCASE (preferred)
-ERROR: (spec/combined.env:5) invalid key '123_BAD'
-WARNING: (spec/combined.env:7) key 'mixedCase' is not UPPERCASE (preferred)
-ERROR: (spec/combined.env:8) missing assignment (=)
-6 checked, 2 errors, 2 warnings

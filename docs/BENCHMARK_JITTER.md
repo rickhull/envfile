@@ -3,7 +3,7 @@
 ## The problem
 
 The benchmarks in this project measure process invocation throughput — how many
-times per second a given linter can be launched, run, and reaped. At the fast
+times per second a given validator can be launched, run, and reaped. At the fast
 end (asm, C, Zig, Rust), each iteration takes 0.4–1ms. At that timescale, the
 Linux scheduler is a significant source of noise.
 
@@ -33,7 +33,7 @@ latency spikes.
 
 ### How it manifests
 
-The `cv%` column in `cbench`/`zbench` output quantifies it directly. Slow
+The `cv%` column in the current benchmark output quantifies it directly. Slow
 impls (bun, deno, nu) show 2–5% CV because scheduler noise is small relative
 to their ~50–85ms runtime. Fast impls (asm, C, Zig, Rust) show 10–25% CV
 because the same absolute noise is a large fraction of their ~0.4–1ms runtime.
@@ -61,8 +61,7 @@ Pin the benchmark process to a single core. Eliminates migration cost and
 ensures all iterations run on the same L1/L2 cache.
 
 ```sh
-taskset -c 2 bin/cbench
-taskset -c 2 bin/zbench
+taskset -c 2 bin/bench
 ```
 
 No privileges required. Choose a core that is otherwise idle. Does not prevent
@@ -74,7 +73,7 @@ Lower the nice value of the benchmark process to reduce its chance of being
 preempted by other user-space work.
 
 ```sh
-sudo nice -n -20 bin/cbench
+sudo nice -n -20 bin/bench
 ```
 
 Without `sudo`, you can only raise the nice value (lower priority), which is
@@ -94,8 +93,7 @@ scheduler tasks on the same core. The most effective user-accessible mitigation
 short of CPU isolation.
 
 ```sh
-sudo chrt -f 99 bin/cbench
-sudo chrt -f 99 bin/zbench
+sudo chrt -f 99 bin/bench
 ```
 
 Requires root. Use with care — a runaway `SCHED_FIFO` process at priority 99
@@ -105,7 +103,7 @@ unattended.
 Combining with `taskset` is effective:
 
 ```sh
-sudo chrt -f 99 taskset -c 2 bin/cbench
+sudo chrt -f 99 taskset -c 2 bin/bench
 ```
 
 ### CPU frequency governor — `/sys/devices`
@@ -156,14 +154,14 @@ benchmark machine.
 For a quick, low-effort improvement (no reboot, no config changes):
 
 ```sh
-taskset -c 2 bin/cbench
+taskset -c 2 bin/bench
 ```
 
 For serious measurement on a developer machine:
 
 ```sh
 echo performance | sudo tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor
-sudo chrt -f 99 taskset -c 2 bin/cbench
+sudo chrt -f 99 taskset -c 2 bin/bench
 ```
 
 Restore frequency governor afterward if desired.

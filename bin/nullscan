@@ -1,0 +1,4 @@
+#!/bin/sh
+# nullscan — emit filenames whose contents contain no NUL bytes.
+
+LC_ALL=C exec awk -f "$(dirname "$0")/nullscan.awk" "$@"
