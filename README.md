@@ -1,13 +1,10 @@
 # envfile
 
-`envfile` is a family of environment file formats under one banner.
+`envfile` is a family of environment file formats under one banner:
 
-Current scopes:
-
-- `shell/` — shell-oriented format with quoting discipline; no interpolation, no `export` prefix
-- `native/` — POSIX-native, byte-oriented format (`KEY=VALUE`, `\n`-terminated, three special bytes: `=`, `\n`, `\0`)
-- `compat/` — reserved for a possible future relaxed format
-- `corpus/` — sanitized real-world `.env` files shared across formats
+* `native` - as direct an analogue to POSIX Environment as possible; newline-terminated rather than null-terminated
+* `shell` - respects the upper/lower split from POSIX; upcased keys, quoted spaced values; does not accept anything that sh cannot reasonably source
+* `compat` - broader compatibility with SystemD's `EnvironmentFile=` format (not shell-sourceable)
 
 ## Quick start
 
