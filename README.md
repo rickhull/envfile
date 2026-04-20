@@ -2,9 +2,25 @@
 
 `envfile` is a family of environment file formats under one banner:
 
-* `native` - as direct an analogue to POSIX Environment as possible; newline-terminated rather than null-terminated
-* `shell` - respects the upper/lower split from POSIX; upcased keys, quoted spaced values; does not accept anything that sh cannot reasonably source
-* `compat` - broader compatibility with SystemD's `EnvironmentFile=` format (not shell-sourceable)
+* `native`
+  - as direct an analogue to POSIX Environment as possible
+  - unrestricted keys and values
+  - newline-terminated rather than null-terminated
+  - three significant chars: equals, newline, NUL
+  - leading-octothorpe comments `# this is a comment`
+  - blank lines tolerated
+  - optional CRLF handling
+* `shell`
+  - `native` with additional restrictions
+  - upcased alphanumeric keys, quoted spaced values
+  - does not accept anything that `sh` cannot reasonably source
+  - respects the upper/lower split from POSIX (application=lower, shell=upper)
+  - BOM handling
+* `compat`
+  - `native` with additional restrictions
+  - not shell-sourceable
+  - broad compatibility with SystemD's `EnvironmentFile=` format
+  - BOM handling
 
 ## Quick start
 
