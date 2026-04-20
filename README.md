@@ -9,23 +9,89 @@ Current scopes:
 - `compat/` — reserved for a possible future relaxed format
 - `corpus/` — sanitized real-world `.env` files shared across formats
 
+## Quick start
+
+```sh
+bin/lang status                    # what implementations are available?
+bin/envfile format=shell action=validate shell/accepted/accepted.env
+make all                           # build compiled implementations (skips missing toolchains)
+just test                          # run the full test suite
+```
+
+No tools beyond `awk` are required. `make` uses whatever compilers are on
+`PATH` and silently skips targets whose toolchain is absent.
+
+Install [mise](https://mise.jdx.dev) and [just](https://github.com/casey/just)
+for pinned tool versions and recipe-driven workflows, or use system tools
+directly. See [docs/MISE.md](docs/MISE.md) for details.
+
+## The tools
+
+### `bin/envfile` — pipeline dispatcher
+
+The primary interface. Resolves configuration, selects an implementation, and
+execs it with all config forwarded as `ENVFILE_*` env vars.
+
+```sh
+bin/envfile format=shell action=dump shell/accepted/accepted.env
+bin/envfile format=native action=validate native/accepted/ascii.env
+bin/envfile format=shell action=normalize config=myconfig.env shell/normalize/bom.env
+```
+
+Configuration channels, resolved in priority order (later wins):
+
+1. `config=path` — a native-format file; behavior knobs only (`BOM=`, `CRLF=`,
+   `NUL=`, `BACKSLASH_CONTINUATION=`); everything else silently ignored
+2. `ENVFILE_*` env vars — already in the caller's environment; fill gaps left
+   by the config file
+3. ARGV `key=value` — routing only: `format=`, `language=`, `action=`,
+   `config=`, `env=`; behavior knobs are not accepted on ARGV
+
+By the time an implementation is invoked, all configuration is resolved and
+forwarded as env vars. Implementations read env vars only — no ARGV parsing,
+no config file reading.
+
+### `bin/bench` — benchmark dispatcher
+
+Benchmarks implementations against fixture or corpus files. Always benches the
+reference impl (awk) first as baseline.
+
+```sh
+bin/bench format=shell                          # all available impls
+bin/bench format=native action=apply rs c       # only Rust and C
+bin/bench format=shell files=corpus             # corpus instead of fixtures
+```
+
+The dispatcher parses `format=`, `action=`, `files=` from ARGV, sets
+`BENCH_FORMAT`, `BENCH_ACTION`, `BENCH_FILES`, `BENCH_REFERENCE` as env vars,
+then delegates to `bench.c` (or `bench.py`). Remaining ARGV is the impl filter:
+bare language names or paths. Empty filter = discover all available
+implementations.
+
+### `bin/nullscan` — NUL byte scanner
+
+Scans env files for NUL (`\0`) bytes. Used to identify files that require
+`ENVFILE_NUL=ignore` or `reject` handling.
+
+### `bin/lang` — language resolution
+
+Query tool for language metadata and runnable implementation paths.
+
+```sh
+bin/lang status          # show all languages and tool availability
+bin/lang awk envfile     # resolve runnable impl path for awk
+bin/lang go which        # resolve tool path for go
+bin/lang reference       # print the reference impl language (lowest-preference scripted)
+```
+
+See [docs/MISE.md](docs/MISE.md) for full resolution logic and mise
+integration.
+
 ## Pipeline
 
 Five actions form a pipeline: `normalize → validate → dump → delta → apply`.
 Each action implicitly runs all prior stages. See [docs/PIPELINE.md](docs/PIPELINE.md)
 for stage contracts, format matrix, config surface, and implementation guidance.
-
-Normalize pass configuration (all formats unless noted):
-
-| Variable | Values | Default | Formats |
-|---|---|---|---|
-| `ENVFILE_BOM` | `literal` `strip` `reject` | `strip` | shell, compat |
-| `ENVFILE_CRLF` | `strip` `ignore` | `ignore` | all |
-| `ENVFILE_NUL` | `reject` `ignore` | `reject` | all |
-| `ENVFILE_BACKSLASH_CONTINUATION` | `accept` `ignore` | `ignore` | shell, compat |
-
-`ENVFILE_CRLF=strip` uses a whole-file scan: strips `\r` only if every line
-ends `\r\n`; mixed files are left untouched.
 
 ## Testing
 
@@ -67,19 +133,11 @@ native/normalize/nul.NUL=ignore.out
 Run the full verification suite:
 
 ```sh
-just shell::verify              # all shell fixtures: accepted, rejected, mixed
-just shell::verify-normalize    # shell normalize fixtures (11 fixture × mode combos)
-just native::verify             # all native fixtures: accepted, rejected
-just native::verify-normalize   # native normalize fixtures (8 fixture × mode combos)
-just native::verify-apply       # native apply fixtures
-just shell::check-bash          # semantic cross-check: bash must agree on accepted values
-```
-
-All recipes accept an optional implementation argument:
-
-```sh
-just shell::verify c
-just native::verify-normalize awk c
+just test                          # shell + native against awk
+just shell::verify c               # shell fixtures against C impl
+just native::verify-normalize      # native normalize (8 fixture × mode combos)
+just native::verify-apply          # native apply fixtures
+just shell::check-bash             # semantic cross-check: bash must agree on accepted values
 ```
 
 Regenerate golden files after intentional behavior changes, then review
@@ -89,47 +147,7 @@ the diff before committing:
 just regen               # regenerate all golden files
 just shell::regen        # shell only
 just native::regen       # native only
-just native::regen-apply # native apply only
 ```
-
-## Quick start
-
-```sh
-just impls         # check which implementations are available
-make all           # build all compiled implementations
-just test          # run the full test suite against the reference implementation
-```
-
-## Dispatcher
-
-`bin/envfile` is the POSIX `sh` entry point and the primary interface to the
-repo. It resolves configuration, selects an implementation, and execs it with
-all config forwarded as `ENVFILE_*` env vars.
-
-```sh
-bin/envfile format=shell action=dump shell/accepted/accepted.env
-bin/envfile format=native action=validate native/accepted/ascii.env
-bin/envfile format=shell action=normalize config=myconfig.env shell/normalize/bom.env
-```
-
-**Configuration channels**, resolved in priority order (later wins):
-
-1. `config=path` — a native-format file; behavior knobs only (`BOM=`, `CRLF=`,
-   `NUL=`, `BACKSLASH_CONTINUATION=`); everything else silently ignored
-2. `ENVFILE_*` env vars — already in the caller's environment; fill gaps left
-   by the config file
-3. ARGV `key=value` — routing only: `format=`, `language=`, `action=`,
-   `config=`, `env=`; behavior knobs are not accepted on ARGV
-
-By the time an implementation is invoked, all configuration is resolved and
-forwarded as env vars. Implementations read env vars only — no ARGV parsing,
-no config file reading.
-
-Format-gating: `ENVFILE_BOM` values other than `literal`, and
-`ENVFILE_BACKSLASH_CONTINUATION=accept`, are fatal errors for `format=native`.
-
-Default implementation search order: `awk`, then `perl`/`bash`/`python`/`sh`
-for shell; `awk`, `c`, `go`, `zig`, `bash`, `sh`, `perl` for native.
 
 ## Implementations
 
@@ -157,31 +175,16 @@ from `src/<language>/` (compiled):
 The C build uses a pluggable backend: `src/c/envfile.c` is the shared
 front-end; `src/c/backend.c` or `src/c/backend.asm` is selected at link time.
 
-`bin/lang <lang> envfile` resolves a runnable repo implementation for a
-language, building compiled targets on demand and treating missing runtimes as
-unavailable.
-
 ## Build
 
 ```sh
-make all          # build all compiled implementations
+make all          # build all compiled implementations + bench + nullscan
 make c            # build just bin/envfile.c
 make asm          # build bin/envfile.asm (C front-end + ASM backend)
 make now          # fast compilation, unoptimized (-O0)
 make fast         # optimized binaries (-O2, default)
 make clean        # remove bin/ outputs and .make/ stamps
-```
-
-## Benchmark
-
-`bin/bench` and `bin/nullscan` are built by `make all`. To build individually:
-`make bench`, `make nullscan`.
-
-```sh
-just bench::run       # run benchmark binary
-just bench::shell     # shell-format benchmarks
-just bench::native    # native-format benchmarks
-just bench::corpus    # benchmark over corpus files
+make status       # same as bin/lang status
 ```
 
 ## Corpus
@@ -196,9 +199,15 @@ just corpus::generate    # explore → filter → collect pipeline
 ## Additional docs
 
 - [docs/PIPELINE.md](docs/PIPELINE.md) — full pipeline spec
+- [docs/APPLY.md](docs/APPLY.md) — apply action semantics
 - [docs/TERMINOLOGY.md](docs/TERMINOLOGY.md) — glossary
 - [docs/STRATEGY.md](docs/STRATEGY.md) — adoption and standardization notes
+- [docs/MISE.md](docs/MISE.md) — mise integration and bin/lang resolution
+- [docs/NU.md](docs/NU.md) — Nushell implementation notes
 - [docs/BENCHMARK_JITTER.md](docs/BENCHMARK_JITTER.md) — benchmarking noise notes
+- [docs/BOM.md](docs/BOM.md) — BOM handling details
+- [docs/ERRORS.md](docs/ERRORS.md) — error posture
+- [docs/CORPUS.md](docs/CORPUS.md) — corpus generation pipeline
 
 ## License
 
