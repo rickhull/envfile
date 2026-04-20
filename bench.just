@@ -24,27 +24,27 @@ teardown:
 
 # Run the benchmark binary with elevated privileges.
 run *args:
-  chrt -f 99 taskset -c 0 nice -n -20 bin/bench {{args}} || bin/bench {{args}}
+  chrt -f 99 taskset -c 0 nice -n -20 bench {{args}} || bench {{args}}
 
 # Run shell-format benchmarks.
 shell *args:
-  chrt -f 99 taskset -c 0 nice -n -20 bin/bench format=shell {{args}} || bin/bench format=shell {{args}}
+  chrt -f 99 taskset -c 0 nice -n -20 bench format=shell {{args}} || bench format=shell {{args}}
 
 # Run native-format benchmarks.
 native *args:
-  chrt -f 99 taskset -c 0 nice -n -20 bin/bench format=native {{args}} || bin/bench format=native {{args}}
+  chrt -f 99 taskset -c 0 nice -n -20 bench format=native {{args}} || bench format=native {{args}}
 
 # Run the benchmark over the shared corpus with the default strict format.
 corpus *args:
-  chrt -f 99 taskset -c 0 nice -n -20 bin/bench files=corpus {{args}} || bin/bench files=corpus {{args}}
+  chrt -f 99 taskset -c 0 nice -n -20 bench files=corpus {{args}} || bench files=corpus {{args}}
 
 # Run shell-format benchmarks over the shared corpus.
 shell_corpus *args:
-  chrt -f 99 taskset -c 0 nice -n -20 bin/bench format=shell files=corpus {{args}} || bin/bench format=shell files=corpus {{args}}
+  chrt -f 99 taskset -c 0 nice -n -20 bench format=shell files=corpus {{args}} || bench format=shell files=corpus {{args}}
 
 # Run native-format benchmarks over the shared corpus.
 native_corpus *args:
-  chrt -f 99 taskset -c 0 nice -n -20 bin/bench format=native files=corpus {{args}} || bin/bench format=native files=corpus {{args}}
+  chrt -f 99 taskset -c 0 nice -n -20 bench format=native files=corpus {{args}} || bench format=native files=corpus {{args}}
 
 # Compare nullscan argv and stdin modes over the shared corpus.
 nullscan:
@@ -57,7 +57,7 @@ nullscan:
   mapfile -t files < <(find corpus/files -type f | sort)
   printf '%s\n' "${files[@]}" > "$tmpdir/files"
 
-  bin/nullscan "${files[@]}" > "$tmpdir/argv.out"
-  bin/nullscan < "$tmpdir/files" > "$tmpdir/stdin.out"
+  nullscan "${files[@]}" > "$tmpdir/argv.out"
+  nullscan < "$tmpdir/files" > "$tmpdir/stdin.out"
 
   diff -u "$tmpdir/argv.out" "$tmpdir/stdin.out"

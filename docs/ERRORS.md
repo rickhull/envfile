@@ -58,8 +58,8 @@ Current file-error cases include:
 
 These stop that file, but the run may continue with later files.
 
-The current warning case is `WARNING_BOM` when BOM handling is set to warn.
-It strips the BOM, reports the warning, and keeps going.
+BOM handling no longer emits warnings. BOM mode is strictly a prepass policy:
+`literal`, `strip`, or `reject`.
 
 ### Line
 

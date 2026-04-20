@@ -16,6 +16,12 @@ WARMUP_MIN_N = 5     # minimum Welford samples before checking CV
 WARMUP_STABLE = 5    # consecutive samples below threshold to declare stable
 CV_THRESHOLD = 0.03  # 3%
 PATTERN      = "bin/envfile.*"
+LANG_TOOL    = "bin/lang"
+SHELL_DIR    = "shell/accepted"
+NATIVE_DIR   = "native/accepted"
+CORPUS_DIR   = "corpus/files"
+FILES_FIXTURES = "fixtures"
+FILES_CORPUS   = "corpus"
 
 
 def escalate():
@@ -60,6 +66,64 @@ class Welford:
 
 def run_once(cmd, spec_files):
     subprocess.run(cmd + spec_files, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def resolve_lang(lang):
+    proc = subprocess.run(
+        [LANG_TOOL, lang, "envfile"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        text=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        return None
+    path = proc.stdout.strip()
+    return path or None
+
+
+def assemble_paths():
+    paths = []
+    seen = set()
+    for bucket in ("built", "scripted"):
+        proc = subprocess.run(
+            [LANG_TOOL, "list", bucket],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False,
+        )
+        if proc.returncode != 0:
+            raise SystemExit(proc.stderr.strip() or f"bench.py: {LANG_TOOL} list {bucket} failed")
+        for lang in proc.stdout.split():
+            path = resolve_lang(lang)
+            if not path:
+                print(f"bench.py: skipping unavailable language {lang}", file=sys.stderr)
+                continue
+            if path in seen:
+                continue
+            seen.add(path)
+            paths.append(path)
+    return paths
+
+
+def collect_specs(format_name, files_mode):
+    specs = []
+    if files_mode == FILES_CORPUS:
+        for root, dirs, files in os.walk(CORPUS_DIR):
+            dirs.sort()
+            for name in sorted(files):
+                path = os.path.join(root, name)
+                if os.path.isfile(path):
+                    specs.append(path)
+    else:
+        spec_dir = NATIVE_DIR if format_name == "native" else SHELL_DIR
+        for name in sorted(os.listdir(spec_dir)):
+            if name.endswith(".env"):
+                path = os.path.join(spec_dir, name)
+                if os.path.isfile(path):
+                    specs.append(path)
+    return specs
 
 
 def warmup(cmd, spec_files):
@@ -127,20 +191,45 @@ def label(path):
 def main():
     escalate()
 
-    if sys.argv[1:]:
+    format_name = "shell"
+    files_mode = FILES_FIXTURES
+    impl_args = []
+
+    for arg in sys.argv[1:]:
+        if arg.startswith("format="):
+            format_name = arg.split("=", 1)[1]
+        elif arg.startswith("files="):
+            files_mode = arg.split("=", 1)[1]
+        else:
+            impl_args.append(arg)
+
+    if format_name not in ("shell", "native"):
+        print(f"bench.py: unsupported format: {format_name}", file=sys.stderr)
+        sys.exit(1)
+    if files_mode not in (FILES_FIXTURES, FILES_CORPUS):
+        print(f"bench.py: unsupported files: {files_mode}", file=sys.stderr)
+        sys.exit(1)
+
+    if impl_args:
         paths = []
-        for p in sys.argv[1:]:
+        for p in impl_args:
             if glob.fnmatch.fnmatch(p, PATTERN):
                 paths.append(p)
+                continue
+            path = None
+            if os.sep not in p and "/" not in p:
+                path = resolve_lang(p)
+            if path:
+                paths.append(path)
             else:
-                print(f"bench.py: {p}: does not match {PATTERN}, skipping", file=sys.stderr)
+                print(f"bench.py: {p}: does not match {PATTERN} and is not a runnable language, skipping", file=sys.stderr)
     else:
-        paths = sorted(p for p in glob.glob(PATTERN) if os.access(p, os.X_OK))
+        paths = assemble_paths()
 
-    spec_files = sorted(glob.glob("spec/*.env"))
+    spec_files = collect_specs(format_name, files_mode)
 
     if not paths:
-        print("bench.py: no executable linters found", file=sys.stderr)
+        print("bench.py: no executable implementations found", file=sys.stderr)
         sys.exit(1)
 
     results = []
@@ -166,7 +255,7 @@ def main():
     base_name, base_mean = base[0], base[1]
 
     print()
-    print(f"{'linter':<12}  {'mean i/s':>10}  {'min i/s':>10}  {'cv%':>6}  {'vs awk(mean)':>14}")
+    print(f"{'validator':<12}  {'mean i/s':>10}  {'min i/s':>10}  {'cv%':>6}  {'vs awk(mean)':>14}")
     print(f"{'--------':<12}  {'--------':>10}  {'-------':>10}  {'---':>6}  {'------------':>14}")
     for name, ips_mean, ips_min, cv in results:
         cv_s = f"{cv*100:.1f}%"

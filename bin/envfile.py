@@ -1,199 +1,291 @@
 #!/usr/bin/env python3
-"""envfile.py — validate/normalize env files (see README.md)"""
+"""envfile.py — validate/normalize env files"""
 
 import os
-import re
 import sys
 
-KEY_RE = re.compile(r'^[A-Za-z_][A-Za-z0-9_]*$')
-BAD_VAL_RE = re.compile(r"""[\s'"\\]""")
-
-ERROR_NO_EQUALS = "ERROR_NO_EQUALS"
-ERROR_EMPTY_KEY = "ERROR_EMPTY_KEY"
-ERROR_KEY_LEADING_WHITESPACE = "ERROR_KEY_LEADING_WHITESPACE"
-ERROR_KEY_TRAILING_WHITESPACE = "ERROR_KEY_TRAILING_WHITESPACE"
-ERROR_VALUE_LEADING_WHITESPACE = "ERROR_VALUE_LEADING_WHITESPACE"
-ERROR_KEY_INVALID = "ERROR_KEY_INVALID"
-ERROR_DOUBLE_QUOTE_UNTERMINATED = "ERROR_DOUBLE_QUOTE_UNTERMINATED"
-ERROR_SINGLE_QUOTE_UNTERMINATED = "ERROR_SINGLE_QUOTE_UNTERMINATED"
-ERROR_TRAILING_CONTENT = "ERROR_TRAILING_CONTENT"
-ERROR_VALUE_INVALID_CHAR = "ERROR_VALUE_INVALID_CHAR"
 
 FORMAT = os.environ.get("ENVFILE_FORMAT", "shell")
 ACTION = os.environ.get("ENVFILE_ACTION", "validate")
+BOM = os.environ.get("ENVFILE_BOM", "literal" if FORMAT == "native" else "strip")
+CRLF = os.environ.get("ENVFILE_CRLF", "ignore")
+NUL = os.environ.get("ENVFILE_NUL", "reject")
+CONT = os.environ.get("ENVFILE_BACKSLASH_CONTINUATION", "ignore")
 
-EQ = ord('=')
-NL = ord('\n')
-HASH = ord('#')
-UNDER = ord('_')
+BOM_BYTES = b"\xef\xbb\xbf"
 
-
-def _emit(norm, key, value):
-    norm.extend(key)
-    norm.extend(b"=")
-    norm.extend(value)
-    norm.extend(b"\n")
+checked = 0
+errors = 0
+env_map = {}
 
 
-def _valid_native_key(key):
+def fatal(code: str, detail: str) -> None:
+    print(f"{code}: {detail}", file=sys.stderr)
+    raise SystemExit(1)
+
+
+def diag(path: str, lineno: int, code: str) -> None:
+    global errors
+    print(f"{code}: {path}:{lineno}", file=sys.stderr)
+    errors += 1
+
+
+def fdiag(path: str, code: str) -> None:
+    global errors
+    print(f"{code}: {path}", file=sys.stderr)
+    errors += 1
+
+
+def split_lines(buf: bytes) -> list[bytes]:
+    lines = buf.split(b"\n")
+    if lines and lines[-1] == b"":
+        lines.pop()
+    return lines
+
+
+def is_continuation(line: bytes) -> bool:
+    n = 0
+    i = len(line) - 1
+    while i >= 0 and line[i] == 0x5C:  # \
+        n += 1
+        i -= 1
+    return (n % 2) == 1
+
+
+def valid_shell_key(key: bytes) -> bool:
     if not key:
         return False
-    b = key[0]
-    if not (ord('A') <= b <= ord('Z') or b == UNDER):
+    c0 = key[0]
+    if not (65 <= c0 <= 90 or 97 <= c0 <= 122 or c0 == 95):
         return False
-    for b in key[1:]:
-        if not (ord('A') <= b <= ord('Z') or ord('0') <= b <= ord('9') or b == UNDER):
+    for c in key[1:]:
+        if not (65 <= c <= 90 or 97 <= c <= 122 or 48 <= c <= 57 or c == 95):
             return False
     return True
 
 
-def _native_record(line, tag, n, diag, norm, normalize):
-    if b"\x00" in line:
-        diag.extend(f"{ERROR_VALUE_INVALID_CHAR}: {tag}:{n}\n".encode())
-        return 1, 1
-    if not line or not line.strip() or line[0] == HASH:
-        return 0, 0
-    eq = line.find(EQ)
-    if eq == -1:
-        diag.extend(f"{ERROR_NO_EQUALS}: {tag}:{n}\n".encode())
-        return 1, 1
-    k, v = line[:eq], line[eq + 1:]
-    if not k:
-        diag.extend(f"{ERROR_EMPTY_KEY}: {tag}:{n}\n".encode())
-        return 1, 1
-    if not _valid_native_key(k):
-        diag.extend(f"{ERROR_KEY_INVALID}: {tag}:{n}\n".encode())
-        return 1, 1
-    if normalize:
-        _emit(norm, k, v)
-    return 1, 0
+def unquote_shell_value(path: str, lineno: int, value: bytes) -> bytes | None:
+    if not value:
+        return value
+    c = value[:1]
+    if c in (b'"', b"'"):
+        rest = value[1:]
+        pos = rest.find(c)
+        if pos == -1:
+            diag(path, lineno, "LINE_ERROR_DOUBLE_QUOTE_UNTERMINATED" if c == b'"' else "LINE_ERROR_SINGLE_QUOTE_UNTERMINATED")
+            return None
+        if rest[pos + 1 :]:
+            diag(path, lineno, "LINE_ERROR_TRAILING_CONTENT")
+            return None
+        return rest[:pos]
+    if any(ch in value for ch in (b" ", b"\t", b"'", b'"', b"\\")):
+        diag(path, lineno, "LINE_ERROR_VALUE_INVALID_CHAR")
+        return None
+    return value
 
 
-def native_scan(buf, tag, diag, norm, normalize):
-    checked = errors = 0
-    n = pos = 0
-    while pos <= len(buf):
-        nl = buf.find(NL, pos)
-        end = nl if nl != -1 else len(buf)
-        if end > pos or nl != -1:
-            n += 1
-            line = buf[pos:end]
-            if b"\x00" in line:
-                diag.extend(f"{ERROR_VALUE_INVALID_CHAR}: {tag}:{n}\n".encode())
-                checked += 1
-                errors += 1
-            elif not line or not line.strip() or line[0] == HASH:
-                pass
-            else:
-                c, e = _native_record(line, tag, n, diag, norm, normalize)
-                checked += c
-                errors += e
-        if nl == -1:
+def env_seed() -> None:
+    global env_map
+    env_map = {}
+    if hasattr(os, "environb"):
+        for k, v in os.environb.items():
+            if k.startswith(b"ENVFILE_"):
+                continue
+            env_map[k] = v
+    else:
+        for k, v in os.environ.items():
+            if k.startswith("ENVFILE_"):
+                continue
+            env_map[k.encode("utf-8", "surrogateescape")] = v.encode("utf-8", "surrogateescape")
+
+
+def subst_value(path: str, lineno: int, value: bytes) -> bytes:
+    global errors
+    out = bytearray()
+    i = 0
+    while i < len(value):
+        pos = value.find(b"$", i)
+        if pos == -1:
+            out.extend(value[i:])
             break
-        pos = nl + 1
-    return checked, errors
+        out.extend(value[i:pos])
+        if pos + 1 >= len(value):
+            out.extend(b"$")
+            break
 
-
-def _open_file(path):
-    if path == "-":
-        return sys.stdin
-    return open(path, "r")
-
-
-def _shell_line(f, n, k, v, error, out, normalize):
-    if k != k.lstrip():
-        error(n, ERROR_KEY_LEADING_WHITESPACE); return
-    if k != k.rstrip():
-        error(n, ERROR_KEY_TRAILING_WHITESPACE); return
-    if v and v != v.lstrip():
-        error(n, ERROR_VALUE_LEADING_WHITESPACE); return
-    if not k:
-        error(n, ERROR_EMPTY_KEY); return
-    if not KEY_RE.match(k):
-        error(n, ERROR_KEY_INVALID); return
-
-    if v:
-        c = v[0]
-        if c == '"':
-            rest = v[1:]
-            pos = rest.find('"')
-            if pos == -1:
-                error(n, ERROR_DOUBLE_QUOTE_UNTERMINATED); return
-            if rest[pos + 1:]:
-                error(n, ERROR_TRAILING_CONTENT); return
-            v = rest[:pos]
-        elif c == "'":
-            rest = v[1:]
-            pos = rest.find("'")
-            if pos == -1:
-                error(n, ERROR_SINGLE_QUOTE_UNTERMINATED); return
-            if rest[pos + 1:]:
-                error(n, ERROR_TRAILING_CONTENT); return
-            v = rest[:pos]
+        rest = value[pos + 1 :]
+        if rest[:1] == b"{":
+            close = rest.find(b"}", 1)
+            if close == -1:
+                out.extend(b"$")
+                out.extend(rest)
+                break
+            name = rest[1:close]
+            i = pos + 1 + close + 1
         else:
-            if BAD_VAL_RE.search(v):
-                error(n, ERROR_VALUE_INVALID_CHAR); return
+            j = 0
+            if not (rest and ((65 <= rest[0] <= 90) or (97 <= rest[0] <= 122) or rest[0] == 95)):
+                out.extend(b"$")
+                i = pos + 1
+                continue
+            j += 1
+            while j < len(rest) and ((65 <= rest[j] <= 90) or (97 <= rest[j] <= 122) or (48 <= rest[j] <= 57) or rest[j] == 95):
+                j += 1
+            name = rest[:j]
+            i = pos + 1 + j
 
-    if normalize:
-        print(f"{k}={v}", file=out)
-
-
-def _lint_file(f, out, normalize):
-    if FORMAT == "native":
-        if f == "-":
-            buf = sys.stdin.buffer.read()
+        if name in env_map:
+            out.extend(env_map[name])
         else:
-            with open(f, "rb") as fh:
-                buf = fh.read()
-        diag = bytearray()
-        norm = bytearray()
-        checked, errors = native_scan(buf, f, diag, norm, normalize)
-        if norm:
-            sys.stdout.buffer.write(norm)
-        out.buffer.write(diag)
-        return checked, errors
+            print(f"LINE_ERROR_UNBOUND_REF ({name.decode('latin1')}): {path}:{lineno}", file=sys.stderr)
+            errors += 1
 
-    checked = errors = 0
+    return bytes(out)
 
-    def error(n, msg):
-        nonlocal errors
-        print(f"{msg}: {f}:{n}", file=out)
-        errors += 1
 
-    with _open_file(f) as fh:
-        for n, raw in enumerate(fh, 1):
-            line = raw.rstrip("\n")
-            if line.endswith("\r"):
-                line = line[:-1]
-            if "\x00" in line:
-                error(n, ERROR_VALUE_INVALID_CHAR)
+def handle_record(path: str, lineno: int, key: bytes, raw_value: bytes, value: bytes) -> None:
+    if ACTION == "dump":
+        sys.stdout.buffer.write(key + b"=" + value + b"\n")
+        return
+    if ACTION in ("validate", "normalize"):
+        return
+
+    resolved = value
+    if FORMAT == "native" or not raw_value.startswith(b"'"):
+        resolved = subst_value(path, lineno, resolved)
+    env_map[key] = resolved
+
+    if ACTION == "delta":
+        sys.stdout.buffer.write(key + b"=" + resolved + b"\n")
+
+
+def process_file(path: str, file_bytes: bytes) -> None:
+    global checked
+
+    if NUL == "reject" and b"\x00" in file_bytes:
+        fdiag(path, "FILE_ERROR_NUL")
+        return
+
+    lines = split_lines(file_bytes)
+
+    if lines and lines[0].startswith(BOM_BYTES):
+        if BOM == "reject":
+            fdiag(path, "FILE_ERROR_BOM")
+            return
+        if BOM == "strip":
+            lines[0] = lines[0][3:]
+
+    if CRLF == "strip":
+        all_crlf = all(line.endswith(b"\r") for line in lines) if lines else False
+        if all_crlf:
+            lines = [line[:-1] for line in lines]
+
+    proc_lines: list[bytes] = []
+    proc_lineno: list[int] = []
+    if CONT == "accept":
+        i = 0
+        while i < len(lines):
+            line = lines[i]
+            lineno = i + 1
+            i += 1
+            while is_continuation(line) and i < len(lines):
+                line = line[:-1] + lines[i]
+                lineno = i + 1
+                i += 1
+            proc_lines.append(line)
+            proc_lineno.append(lineno)
+    else:
+        for i, line in enumerate(lines, start=1):
+            proc_lines.append(line)
+            proc_lineno.append(i)
+
+    for line, lineno in zip(proc_lines, proc_lineno, strict=False):
+        trimmed = line[:-1] if line.endswith(b"\r") else line
+        if all(c in (0x20, 0x09) for c in trimmed):
+            continue
+        if trimmed.startswith(b"#"):
+            continue
+
+        checked += 1
+        eq = line.find(b"=")
+        if eq == -1:
+            diag(path, lineno, "LINE_ERROR_NO_EQUALS")
+            continue
+        raw_key = line[:eq]
+        raw_value = line[eq + 1 :]
+
+        if ACTION == "normalize":
+            sys.stdout.buffer.write(raw_key + b"=" + raw_value + b"\n")
+            continue
+
+        work = line if FORMAT == "native" else trimmed
+        eq2 = work.find(b"=")
+        if eq2 == -1:
+            diag(path, lineno, "LINE_ERROR_NO_EQUALS")
+            continue
+        key = work[:eq2]
+        value = work[eq2 + 1 :]
+
+        if FORMAT == "native":
+            if not key:
+                diag(path, lineno, "LINE_ERROR_EMPTY_KEY")
                 continue
-            if not line.strip():
-                continue
-            if line.startswith("#"):
-                continue
-            checked += 1
-            if "=" not in line:
-                error(n, ERROR_NO_EQUALS)
-                continue
-            k, v = line.split("=", 1)
-            _shell_line(f, n, k, v, error, out, normalize)
+            handle_record(path, lineno, key, raw_value, value)
+            continue
 
-    return checked, errors
+        if key and key[0] in (0x20, 0x09):
+            diag(path, lineno, "LINE_ERROR_KEY_LEADING_WHITESPACE")
+            continue
+        if key and key[-1] in (0x20, 0x09):
+            diag(path, lineno, "LINE_ERROR_KEY_TRAILING_WHITESPACE")
+            continue
+        if value and value[0] in (0x20, 0x09):
+            diag(path, lineno, "LINE_ERROR_VALUE_LEADING_WHITESPACE")
+            continue
+        if not key:
+            diag(path, lineno, "LINE_ERROR_EMPTY_KEY")
+            continue
+        if not valid_shell_key(key):
+            diag(path, lineno, "LINE_ERROR_KEY_INVALID")
+            continue
+
+        unquoted = unquote_shell_value(path, lineno, value)
+        if unquoted is None:
+            continue
+        handle_record(path, lineno, key, raw_value, unquoted)
 
 
-def lint(files, out=sys.stderr):
-    normalize = ACTION == "normalize"
-    total_checked = total_errors = 0
-    if not files:
-        files = ["-"]
-    for f in files:
-        c, e = _lint_file(f, out, normalize)
-        total_checked += c
-        total_errors += e
-    print(f"{total_checked} checked, {total_errors} errors", file=out)
-    return total_errors
+def main() -> int:
+    global errors
+
+    if BOM not in ("literal", "strip", "reject"):
+        fatal("FATAL_ERROR_BAD_ENVFILE_VALUE", f"ENVFILE_BOM={BOM}")
+    if FORMAT == "native" and BOM != "literal":
+        fatal("FATAL_ERROR_UNSUPPORTED", f"format=native ENVFILE_BOM={BOM}")
+
+    files = sys.argv[1:] or ["-"]
+    if ACTION in ("delta", "apply"):
+        env_seed()
+
+    for path in files:
+        try:
+            if path == "-":
+                data = sys.stdin.buffer.read()
+            else:
+                with open(path, "rb") as fh:
+                    data = fh.read()
+        except OSError:
+            fdiag(path, "FILE_ERROR_FILE_UNREADABLE")
+            continue
+        process_file(path, data)
+
+    if ACTION == "apply":
+        for key in sorted(k for k in env_map if not k.startswith(b"ENVFILE_")):
+            sys.stdout.buffer.write(key + b"=" + env_map[key] + b"\n")
+
+    print(f"{checked} checked, {errors} errors", file=sys.stderr)
+    return 1 if errors else 0
 
 
 if __name__ == "__main__":
-    sys.exit(1 if lint(sys.argv[1:]) > 0 else 0)
+    raise SystemExit(main())

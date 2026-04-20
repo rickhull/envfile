@@ -10,6 +10,7 @@ language=
 action=validate
 config=
 envfile=
+REFERENCE=awk
 
 # behavior knobs — empty means "use impl default"
 envfile_bom=
@@ -49,33 +50,43 @@ is_language() {
   return 1
 }
 
-validate_bom()                    { case $1 in reject|warn|strip) ;; *) fatal_error FATAL_ERROR_BAD_ENVFILE_VALUE "ENVFILE_BOM=$1";; esac; }
+validate_bom()                    { case $1 in literal|strip|reject) ;; *) fatal_error FATAL_ERROR_BAD_ENVFILE_VALUE "ENVFILE_BOM=$1";; esac; }
 validate_crlf()                   { case $1 in strip|ignore)     ;; *) fatal_error FATAL_ERROR_BAD_ENVFILE_VALUE "ENVFILE_CRLF=$1";; esac; }
 validate_nul()                    { case $1 in reject|ignore)     ;; *) fatal_error FATAL_ERROR_BAD_ENVFILE_VALUE "ENVFILE_NUL=$1";; esac; }
 validate_backslash_continuation() { case $1 in accept|ignore)    ;; *) fatal_error FATAL_ERROR_BAD_ENVFILE_VALUE "ENVFILE_BACKSLASH_CONTINUATION=$1";; esac; }
 
 choose_impl() {
-  fmt=$1
-  lang=$2
+  lang=$1
 
+  [ -n "$lang" ] || lang=$REFERENCE
   if [ -n "$lang" ]; then
+    impl=$("$script_dir/lang" "$lang" envfile 2>/dev/null) && {
+      printf '%s\n' "$impl"
+      return 0
+    }
+
+    # opportunistic build for compiled languages
+    case "$lang" in
+      c) make -C "$script_dir/.." c >/dev/null 2>&1 ;;
+      go) make -C "$script_dir/.." go >/dev/null 2>&1 ;;
+      rust) make -C "$script_dir/.." rust >/dev/null 2>&1 ;;
+      zig) make -C "$script_dir/.." zig >/dev/null 2>&1 ;;
+      asm) make -C "$script_dir/.." asm >/dev/null 2>&1 ;;
+      *) return 1 ;;
+    esac
+
     impl=$("$script_dir/lang" "$lang" envfile 2>/dev/null) || return 1
     printf '%s\n' "$impl"
     return 0
   fi
+}
 
-  case $fmt in
-    native) set -- awk c go zig bash sh perl ;;
-    shell|compat) set -- awk perl bash python sh ;;
-  esac
-
-  for lang in "$@"; do
-    impl=$("$script_dir/lang" "$lang" envfile 2>/dev/null) || continue
-    printf '%s\n' "$impl"
-    return 0
-  done
-
-  return 1
+resolve_tool() {
+  tool=$1
+  if [ -n "${ENVFILE_RUNTIME_PATH:-}" ]; then
+    PATH="$ENVFILE_RUNTIME_PATH" command -v "$tool" 2>/dev/null && return 0
+  fi
+  command -v "$tool" 2>/dev/null
 }
 
 # Parse ARGV — routing and envfile channels only
@@ -141,15 +152,15 @@ fi
 
 # Format-gating: some passes are not applicable to all formats
 if [ "$format" = "native" ]; then
-  [ -n "$envfile_bom" ] && fatal_error FATAL_ERROR_UNSUPPORTED "format=native ENVFILE_BOM=$envfile_bom"
+  [ -n "$envfile_bom" ] && [ "$envfile_bom" != literal ] && fatal_error FATAL_ERROR_UNSUPPORTED "format=native ENVFILE_BOM=$envfile_bom"
   [ "$envfile_backslash_continuation" = "accept" ] && fatal_error FATAL_ERROR_UNSUPPORTED "format=native ENVFILE_BACKSLASH_CONTINUATION=accept"
 fi
 
-impl=$(choose_impl "$format" "$language") || {
+impl=$(choose_impl "$language") || {
   if [ -n "$language" ]; then
-    fatal_error FATAL_ERROR_UNSUPPORTED "language=$language"
+    fatal_error FATAL_ERROR_UNAVAILABLE "language=$language"
   else
-    fatal_error FATAL_ERROR_UNSUPPORTED "implementation=none"
+    fatal_error FATAL_ERROR_UNAVAILABLE "implementation=$REFERENCE"
   fi
 }
 
@@ -164,6 +175,18 @@ envp="env ENVFILE_FORMAT=$format ENVFILE_ACTION=$action"
 case $impl in
   */envfile.awk)
     exec $envp LC_ALL=C "$impl" "$@"
+    ;;
+  */envfile.node.js)
+    node_bin=$(resolve_tool node) || fatal_error FATAL_ERROR_UNAVAILABLE "language=node"
+    exec $envp "$node_bin" "$script_dir/../src/js/envfile.js.mjs" "$@"
+    ;;
+  */envfile.bun.js)
+    bun_bin=$(resolve_tool bun) || fatal_error FATAL_ERROR_UNAVAILABLE "language=bun"
+    exec $envp "$bun_bin" "$impl" "$@"
+    ;;
+  */envfile.deno.js)
+    deno_bin=$(resolve_tool deno) || fatal_error FATAL_ERROR_UNAVAILABLE "language=deno"
+    exec $envp "$deno_bin" run --allow-read --allow-env "$impl" "$@"
     ;;
   *)
     exec $envp "$impl" "$@"

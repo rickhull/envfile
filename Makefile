@@ -53,9 +53,9 @@ now: all
 fast: MODE = fast
 fast: all
 
-bench: bin/bench
+bench: bin/bench.c
 
-nullscan: bin/nullscan
+nullscan: bin/nullscan.c
 
 c: bin/envfile.c
 
@@ -100,7 +100,7 @@ $(STAMPDIR)/envfile.asm.stamp: Makefile FORCE | $(STAMPDIR)
 	printf '%s\n%s\n' "ASM_ARGS=$(ASM_ARGS)" "NASM=$(NASM)" > $$tmp; \
 	if test -f $@ && cmp -s $$tmp $@; then rm -f $$tmp; else mv $$tmp $@; fi
 
-bin/bench: src/c/bench.c $(BENCH_STAMP) Makefile
+bin/bench.c: src/c/bench.c $(BENCH_STAMP) Makefile
 	$(CC) $(BENCH_ARGS) -o $@ $< -lm
 
 bin/envfile.c: src/c/envfile.c src/c/backend.c src/c/envfile_backend.h $(C_STAMP) Makefile
@@ -124,17 +124,15 @@ $(ASM_BACKEND_OBJ): src/c/backend.asm $(ASM_STAMP) Makefile | $(STAMPDIR)
 bin/envfile.asm: src/c/envfile.c $(ASM_BACKEND_OBJ) $(ASM_STAMP) Makefile
 	$(CC) $(C_ARGS) -o $@ src/c/envfile.c $(ASM_BACKEND_OBJ)
 
-bin/nullscan: src/c/nullscan.c $(C_STAMP) Makefile
+bin/nullscan.c: src/c/nullscan.c $(C_STAMP) Makefile
 	$(CC) $(C_ARGS) -o $@ $<
 
 clean:
-	rm -rf bin/envfile.go bin/envfile.zig bin/envfile.c bin/envfile.rs bin/envfile.asm bin/nullscan bin/bench $(STAMPDIR)
+	rm -rf bin/envfile.go bin/envfile.zig bin/envfile.c bin/envfile.rs bin/envfile.asm bin/nullscan.c bin/bench.c $(STAMPDIR)
 
 fresh: clean
-	ln -sf bench.py bin/bench
-	ln -sf nullscan.awk bin/nullscan
 
 status:
-	@bin/lang status
+	@$(CURDIR)/bin/lang status
 
 FORCE:

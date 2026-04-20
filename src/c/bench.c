@@ -1,7 +1,7 @@
 /* bench.c — benchmark env validator implementations
  *
- * Globs bin/envfile* plus bin/nullscan, filters on executable bit, runs each
- * against shell/*.env or native/*.env.  Warmup: dynamic via Welford CV
+ * Resolves benchmark targets through bin/lang, then runs each implementation
+ * against the accepted shell/native fixture sets.  Warmup: dynamic via Welford CV
  * stability, capped at 5s.
  * Measurement: count iterations over ~2s window; tracks mean and minimum
  * latency.  Reports both mean- and min-based IPS with CV.
@@ -18,12 +18,12 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <math.h>
-#include <fnmatch.h>
 #include <sched.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/resource.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
@@ -37,7 +37,6 @@
 #define WARMUP_SLOPE_STR  5             /* consecutive checkpoints with subpar improvement */
 #define CV_SLOPE_THRESH   0.005         /* improvement < 0.5pp per sample = subpar */
 #define CV_THRESHOLD      0.03          /* 3%: original absolute exit still applies */
-#define IMPL_DIR       "bin"
 #define SHELL_DIR      "shell"
 #define NATIVE_DIR     "native"
 #define SHELL_EXT      ".env"
@@ -238,9 +237,11 @@ static int collect_corpus(const char *dir, char **out, int *n, int max) {
         if (e->d_name[0] == '.') continue;
         char buf[1024];
         snprintf(buf, sizeof(buf), "%s/%s", dir, e->d_name);
-        if (e->d_type == DT_DIR) {
+        struct stat st;
+        if (stat(buf, &st) != 0) continue;
+        if (S_ISDIR(st.st_mode)) {
             collect_corpus(buf, out, n, max);
-        } else if (e->d_type == DT_REG) {
+        } else if (S_ISREG(st.st_mode)) {
             out[(*n)++] = strdup(buf);
         }
     }
@@ -255,6 +256,54 @@ static int cmp_result_desc(const void *a, const void *b) {
 
 static int cmp_str(const void *a, const void *b) {
     return strcmp(*(char **)a, *(char **)b);
+}
+
+static void trim_newline(char *s) {
+    size_t n = strlen(s);
+    while (n > 0 && (s[n - 1] == '\n' || s[n - 1] == '\r'))
+        s[--n] = '\0';
+}
+
+static int collect_langs(const char *bucket, char **out, int *n, int max) {
+    char cmd[128];
+    snprintf(cmd, sizeof(cmd), "bin/lang list %s", bucket);
+    FILE *fp = popen(cmd, "r");
+    if (!fp) return -1;
+
+    char line[256];
+    while (fgets(line, sizeof(line), fp) && *n < max) {
+        trim_newline(line);
+        if (line[0] == '\0')
+            continue;
+        out[(*n)++] = strdup(line);
+    }
+
+    int status = pclose(fp);
+    if (status != 0)
+        return -1;
+    return 0;
+}
+
+static char *resolve_impl(const char *lang) {
+    char cmd[256];
+    snprintf(cmd, sizeof(cmd), "bin/lang %s envfile 2>/dev/null", lang);
+    FILE *fp = popen(cmd, "r");
+    if (!fp) return NULL;
+
+    char path[512];
+    char *result = NULL;
+    if (fgets(path, sizeof(path), fp)) {
+        trim_newline(path);
+        if (path[0] != '\0')
+            result = strdup(path);
+    }
+
+    int status = pclose(fp);
+    if (status != 0) {
+        free(result);
+        return NULL;
+    }
+    return result;
 }
 
 int main(int argc, char *argv[]) {
@@ -297,7 +346,7 @@ int main(int argc, char *argv[]) {
     } else {
         specs = malloc(MAX_SPECS * sizeof(char *));
         if (!specs) { perror("malloc"); return 1; }
-        const char *spec_dir = strcmp(format, FORMAT_NATIVE) == 0 ? NATIVE_DIR : SHELL_DIR;
+        const char *spec_dir = strcmp(format, FORMAT_NATIVE) == 0 ? "native/accepted" : "shell/accepted";
         DIR *d = opendir(spec_dir);
         if (!d) {
             fprintf(stderr, "bench: cannot open %s: %s\n", spec_dir, strerror(errno));
@@ -305,40 +354,47 @@ int main(int argc, char *argv[]) {
         }
         struct dirent *e;
         while ((e = readdir(d)) && nspecs < MAX_SPECS) {
-            if (e->d_type != DT_REG) continue;
             int nl = strlen(e->d_name), xl = strlen(SHELL_EXT);
             if (nl <= xl || strcmp(e->d_name + nl - xl, SHELL_EXT) != 0) continue;
             char buf[512];
             snprintf(buf, sizeof(buf), "%s/%s", spec_dir, e->d_name);
+            struct stat st;
+            if (stat(buf, &st) != 0 || !S_ISREG(st.st_mode)) continue;
             specs[nspecs++] = strdup(buf);
         }
         closedir(d);
         qsort(specs, nspecs, sizeof(char *), cmp_str);
     }
 
-    /* collect executable validator impls */
+    /* collect executable validator impls via bin/lang */
+    char *langs[MAX_IMPLS]; int nlangs = 0;
     char *impls[MAX_IMPLS]; int nimpls = 0;
     {
-        DIR *d = opendir(IMPL_DIR);
-        if (!d) {
-            fprintf(stderr, "bench: cannot open %s: %s\n", IMPL_DIR, strerror(errno));
+        if (collect_langs("built", langs, &nlangs, MAX_IMPLS) < 0) {
+            fprintf(stderr, "bench: cannot resolve built implementations via bin/lang\n");
             return 1;
         }
-        struct dirent *e;
-        while ((e = readdir(d)) && nimpls < MAX_IMPLS) {
-            char buf[512];
-            snprintf(buf, sizeof(buf), "%s/%s", IMPL_DIR, e->d_name);
-            if (access(buf, X_OK) != 0) continue;
-            if (fnmatch("envfile*", e->d_name, 0) != 0 &&
-                strcmp(e->d_name, "nullscan") != 0) continue;
-            impls[nimpls++] = strdup(buf);
+        if (collect_langs("scripted", langs, &nlangs, MAX_IMPLS) < 0) {
+            fprintf(stderr, "bench: cannot resolve scripted implementations via bin/lang\n");
+            return 1;
         }
-        closedir(d);
+
+        for (int i = 0; i < nlangs; i++) {
+            char *path = resolve_impl(langs[i]);
+            if (!path) {
+                fprintf(stderr, "bench: skipping unavailable language: %s\n", langs[i]);
+                free(langs[i]);
+                continue;
+            }
+            impls[nimpls++] = path;
+            free(langs[i]);
+        }
+
         qsort(impls, nimpls, sizeof(char *), cmp_str);
     }
 
     if (nimpls == 0) {
-        printf("no executable validators found for %s in %s/\n", format, IMPL_DIR);
+        printf("no executable validators found via bin/lang for %s\n", format);
         return 1;
     }
 

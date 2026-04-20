@@ -1,14 +1,29 @@
-; backend.asm - optional asm parser backend for envfile
+; backend.asm - optional ASM record-classifier for envfile
+;
+; This file is deliberately narrow:
+;   - the front-end in src/c/envfile.c owns file I/O, normalization, env table
+;     management, delta/apply, and error accounting
+;   - this backend only classifies one already-delimited logical record at a
+;     time and fills EnvfileRecord
+;   - C and ASM share the same ABI, so the backend is selected at link time
+;     without changing the front-end
 ;
 ; Exports:
 ;   envfile_parse_shell(line, len, out)  → status
-;   envfile_parse_native(line, len, out)  → status
+;   envfile_parse_native(line, len, out) → status
 ;
-; SysV AMD64:
+; SysV AMD64 calling convention:
 ;   rdi = line pointer
 ;   rsi = line length
 ;   rdx = EnvfileRecord*
 ;   rax = EnvfileStatus
+;
+; EnvfileRecord layout (shared with src/c/envfile_backend.h):
+;   +0  key pointer
+;   +8  key length
+;   +16 parsed value pointer
+;   +24 parsed value length
+;   +32 value kind (EnvfileValueKind)
 ;
 ; Status codes:
 ;   0  ENVFILE_SKIP
@@ -39,7 +54,12 @@ ENVFILE_ERR_VALUE_INVALID_CHAR         equ 16
 ENVFILE_ERR_SINGLE_QUOTE_UNTERMINATED   equ 17
 ENVFILE_ERR_DOUBLE_QUOTE_UNTERMINATED   equ 18
 ENVFILE_ERR_TRAILING_CONTENT           equ 19
+ENVFILE_VALUE_PLAIN                    equ 0
+ENVFILE_VALUE_SINGLE_QUOTED            equ 1
+ENVFILE_VALUE_DOUBLE_QUOTED            equ 2
 
+; Byte-class helpers.  They are tiny on purpose so the parser flow reads like a
+; set of explicit decisions rather than a giant opaque loop.
 %macro JIF_SPACE 1
     cmp  al, ' '
     je   %1
@@ -81,18 +101,19 @@ ENVFILE_ERR_TRAILING_CONTENT           equ 19
     JIF_DIGIT %1
 %endmacro
 
-%macro JIF_UPPER_DIGIT_UNDER 1
-    JIF_UPPER %1
-    JIF_DIGIT %1
-    cmp  al, '_'
-    je   %1
-%endmacro
-
 section .text
 
 global envfile_parse_shell
 global envfile_parse_native
 
+; envfile_parse_shell:
+;   Accept shell-oriented assignment syntax.
+;   - skip blank/comment records
+;   - allow leading/trailing CR in the raw line
+;   - require a shell identifier in the key
+;   - reject bare whitespace in unquoted values
+;   - allow a quoted value and report the unquoted payload separately
+;   - tag the value kind explicitly so the front-end does not infer policy
 envfile_parse_shell:
     push rbx
     push r12
@@ -137,14 +158,15 @@ envfile_parse_shell:
 
 .found_eq:
     mov  rbx, rdx
-    sub  rbx, rdi               ; key len
+    sub  rbx, rdi               ; key length, excluding '='
     mov  r13, rsi
     sub  r13, rbx
-    dec  r13                    ; value len
-    lea  r12, [rdx + 1]         ; value ptr
-    mov  r9,  r12               ; raw value ptr
-    mov  r10, r13               ; raw value len
+    dec  r13                    ; raw value length
+    lea  r12, [rdx + 1]         ; raw value pointer
+    mov  r9d, ENVFILE_VALUE_PLAIN
 
+    ; Empty key is a dedicated error because it means the record is malformed
+    ; before we even reach shell identifier validation.
     test rbx, rbx
     jz   .empty_key
     movzx eax, byte [rdi]
@@ -174,6 +196,9 @@ envfile_parse_shell:
     mov  eax, ENVFILE_ERR_VALUE_LEADING_WHITESPACE
     jmp  .ret
 
+    ; Key validation is shell-specific: first byte must be alpha or '_', rest
+    ; must be alnum or '_'.  The front-end keeps this backend-specific so the
+    ; same file can still serve as the native parser overlay.
 .validate_key:
     test rbx, rbx
     jz   .key_invalid
@@ -206,6 +231,10 @@ envfile_parse_shell:
     mov  eax, ENVFILE_ERR_KEY_INVALID
     jmp  .ret
 
+    ; Value parsing is split into two cases:
+    ;   - quoted: strip the outer quotes, keep the payload only, require the
+    ;             closing quote to be the last byte in the record
+    ;   - unquoted: reject spaces, quotes, backslash, and NUL
 .value_check:
     test r13, r13
     jz   .ok
@@ -237,6 +266,8 @@ envfile_parse_shell:
     mov  eax, ENVFILE_ERR_VALUE_INVALID_CHAR
     jmp  .ret
 
+    ; Quoted shell value.  The opening quote determines which closing quote is
+    ; legal, and the parsed value excludes both wrappers.
 .quoted:
     movzx r11d, al
     mov  rcx, r13
@@ -266,21 +297,28 @@ envfile_parse_shell:
     lea  r12, [r12 + 1]
     mov  r13, rdx
     sub  r13, r12
+    cmp  r11b, "'"
+    jne  .quoted_double
+    mov  r9d, ENVFILE_VALUE_SINGLE_QUOTED
+    jmp  .ok
+.quoted_double:
+    mov  r9d, ENVFILE_VALUE_DOUBLE_QUOTED
     jmp  .ok
 .trailing:
     mov  eax, ENVFILE_ERR_TRAILING_CONTENT
     jmp  .ret
 
 .ok:
+    ; Write back the shared record view expected by src/c/envfile.c.
     mov  [r8 + 0], rdi
     mov  [r8 + 8], rbx
     mov  [r8 + 16], r12
     mov  [r8 + 24], r13
-    mov  [r8 + 32], r9
-    mov  [r8 + 40], r10
+    mov  [r8 + 32], r9d
     mov  eax, ENVFILE_OK
     jmp  .ret
 
+    ; Blank records and comments are skipped, not reported as errors.
 .skip:
     mov  eax, ENVFILE_SKIP
 .ret:
@@ -289,6 +327,11 @@ envfile_parse_shell:
     pop  rbx
     ret
 
+; envfile_parse_native:
+;   Accept literal native name=value records.
+;   The native format is intentionally permissive on name bytes; the front-end
+;   and docs define the policy as "non-empty key, no '=' in the key".
+;   Values are literal bytes after '=' with only NUL rejected here.
 envfile_parse_native:
     push rbx
     push r12
@@ -328,18 +371,18 @@ envfile_parse_native:
 
 .found_eq_n:
     mov  rbx, rdx
-    sub  rbx, rdi               ; key len
+    sub  rbx, rdi               ; key length, excluding '='
     test rbx, rbx
     jz   .empty_key_n
 .ok_n:
-    lea  r12, [rdi + rbx + 1]
+    lea  r12, [rdi + rbx + 1]   ; raw value pointer
     mov  r13, rsi
     sub  r13, rbx
-    dec  r13
-    mov  r9,  r12               ; raw value ptr
-    mov  r10, r13               ; raw value len
+    dec  r13                    ; raw value length
+    mov  r9d, ENVFILE_VALUE_PLAIN
     test r13, r13
     jz   .write_n
+    ; Native values are literal, but embedded NUL is still rejected.
     mov  rcx, r13
     mov  rdx, r12
 .scan_n:
@@ -355,8 +398,7 @@ envfile_parse_native:
     mov  [r8 + 8], rbx
     mov  [r8 + 16], r12
     mov  [r8 + 24], r13
-    mov  [r8 + 32], r9
-    mov  [r8 + 40], r10
+    mov  [r8 + 32], r9d
     mov  eax, ENVFILE_OK
     jmp  .ret_n
 

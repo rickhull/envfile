@@ -1,4 +1,5 @@
 set shell := ["bash", "-cu"]
+set export
 
 # Corpus mining workflow
 mod corpus
@@ -15,6 +16,11 @@ mod shell
 # Compat format pipeline
 mod compat
 
+bin_dir := justfile_directory() + "/bin"
+# .envrc adds the same bin/ prefix for direnv users; Justfile exports it so
+# `lang` and `envfile` work in recipes without requiring direnv.
+export PATH := bin_dir + ":" + env_var_or_default("PATH", "")
+
 [private]
 default:
   @just --list
@@ -26,23 +32,8 @@ default:
 
 # Run the full test suite against the reference implementation.
 test *args="awk":
-  #!/usr/bin/env bash
-  set -uo pipefail
-  impls=()
-  for arg in {{args}}; do
-    if [[ -x "$arg" ]]; then
-      impls+=("$arg")
-    else
-      path=$(bin/lang "$arg" envfile 2>/dev/null) || { echo "unknown impl: $arg"; exit 1; }
-      impls+=("$path")
-    fi
-  done
-  just shell::verify "${impls[@]}"
-  just shell::verify-normalize "${impls[@]}"
-  just shell::verify-dump "${impls[@]}"
-  just native::verify "${impls[@]}"
-  just native::verify-normalize "${impls[@]}"
-  just native::verify-apply "${impls[@]}"
+  just shell::verify {{args}}
+  just native::verify {{args}}
 
 # Regenerate all golden files from the reference implementation
 regen:
@@ -53,7 +44,7 @@ regen:
 
 # Show availability of all language implementations.
 impls:
-  bin/lang status
+  lang status
 
 # Makefile delegates (prefer: make all, make clean, etc.)
 mod make

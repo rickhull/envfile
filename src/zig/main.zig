@@ -1,180 +1,178 @@
-// main.zig — validate/normalize env files (see README.md)
+// main.zig — envfile zig implementation
 
 const std = @import("std");
-const Io  = std.Io;
+const Io = std.Io;
 
-const ERROR_NO_EQUALS                 = "ERROR_NO_EQUALS";
-const ERROR_EMPTY_KEY                 = "ERROR_EMPTY_KEY";
-const ERROR_KEY_LEADING_WHITESPACE    = "ERROR_KEY_LEADING_WHITESPACE";
-const ERROR_KEY_TRAILING_WHITESPACE   = "ERROR_KEY_TRAILING_WHITESPACE";
-const ERROR_VALUE_LEADING_WHITESPACE  = "ERROR_VALUE_LEADING_WHITESPACE";
-const ERROR_KEY_INVALID               = "ERROR_KEY_INVALID";
-const ERROR_DOUBLE_QUOTE_UNTERMINATED = "ERROR_DOUBLE_QUOTE_UNTERMINATED";
-const ERROR_SINGLE_QUOTE_UNTERMINATED = "ERROR_SINGLE_QUOTE_UNTERMINATED";
-const ERROR_TRAILING_CONTENT          = "ERROR_TRAILING_CONTENT";
-const ERROR_VALUE_INVALID_CHAR        = "ERROR_VALUE_INVALID_CHAR";
+const Action = enum {
+    normalize,
+    validate,
+    dump,
+    delta,
+    apply,
+};
 
-// --- character classifiers ---
+const BomMode = enum {
+    literal,
+    strip,
+    reject,
+};
 
-fn isNativeKeyStart(c: u8) bool { return (c >= 'A' and c <= 'Z') or c == '_'; }
-fn isNativeKeyRest(c: u8)  bool { return (c >= 'A' and c <= 'Z') or (c >= '0' and c <= '9') or c == '_'; }
-fn isShellKeyStart(c: u8) bool { return std.ascii.isAlphabetic(c) or c == '_'; }
-fn isShellKeyRest(c: u8)  bool { return std.ascii.isAlphanumeric(c) or c == '_'; }
-fn isBadValChar(c: u8)     bool { return std.ascii.isWhitespace(c) or c == '\'' or c == '"' or c == '\\'; }
+const Counts = struct {
+    checked: u32 = 0,
+    errors: u32 = 0,
+};
 
-fn buildByteTable(comptime pred: fn (u8) bool) [256]bool {
-    var table: [256]bool = [_]bool{false} ** 256;
-    var i: usize = 0;
-    while (i < table.len) : (i += 1) {
-        table[i] = pred(@as(u8, @intCast(i)));
+const EnvEntry = struct {
+    key: []const u8,
+    value: []const u8,
+};
+
+const EnvStore = struct {
+    allocator: std.mem.Allocator,
+    entries: std.ArrayList(EnvEntry),
+
+    fn init(allocator: std.mem.Allocator) EnvStore {
+        return .{
+            .allocator = allocator,
+            .entries = .empty,
+        };
     }
-    return table;
+
+    fn get(self: *const EnvStore, key: []const u8) ?[]const u8 {
+        for (self.entries.items) |entry| {
+            if (std.mem.eql(u8, entry.key, key)) return entry.value;
+        }
+        return null;
+    }
+
+    fn set(self: *EnvStore, key: []const u8, value: []const u8) !void {
+        for (self.entries.items) |*entry| {
+            if (std.mem.eql(u8, entry.key, key)) {
+                entry.value = value;
+                return;
+            }
+        }
+        try self.entries.append(self.allocator, .{
+            .key = key,
+            .value = value,
+        });
+    }
+
+    fn seedFromProcess(self: *EnvStore, env: anytype) !void {
+        var it = env.iterator();
+        while (it.next()) |kv| {
+            if (std.mem.startsWith(u8, kv.key_ptr.*, "ENVFILE_")) continue;
+            try self.entries.append(self.allocator, .{
+                .key = try self.allocator.dupe(u8, kv.key_ptr.*),
+                .value = try self.allocator.dupe(u8, kv.value_ptr.*),
+            });
+        }
+    }
+
+    fn emitSorted(self: *const EnvStore, stdout: *Io.Writer) !void {
+        const Ctx = struct {
+            items: []const EnvEntry,
+        };
+        const Less = struct {
+            fn less(ctx: Ctx, a: usize, b: usize) bool {
+                return std.mem.lessThan(u8, ctx.items[a].key, ctx.items[b].key);
+            }
+        };
+
+        var idx: std.ArrayList(usize) = .empty;
+        defer idx.deinit(self.allocator);
+
+        for (self.entries.items, 0..) |entry, i| {
+            if (std.mem.startsWith(u8, entry.key, "ENVFILE_")) continue;
+            try idx.append(self.allocator, i);
+        }
+
+        std.sort.heap(usize, idx.items, Ctx{ .items = self.entries.items }, Less.less);
+
+        for (idx.items) |i| {
+            const entry = self.entries.items[i];
+            try stdout.print("{s}={s}\n", .{ entry.key, entry.value });
+        }
+    }
+};
+
+fn fatal(stderr: *Io.Writer, code: []const u8, detail: []const u8) noreturn {
+    stderr.print("{s}: {s}\n", .{ code, detail }) catch {};
+    stderr.flush() catch {};
+    std.process.exit(1);
 }
 
-const native_key_start = buildByteTable(isNativeKeyStart);
-const native_key_rest  = buildByteTable(isNativeKeyRest);
-const shell_key_start = buildByteTable(isShellKeyStart);
-const shell_key_rest  = buildByteTable(isShellKeyRest);
-const bad_val_table    = buildByteTable(isBadValChar);
+fn parseAction(stderr: *Io.Writer, raw: []const u8) Action {
+    if (std.mem.eql(u8, raw, "normalize")) return .normalize;
+    if (std.mem.eql(u8, raw, "validate")) return .validate;
+    if (std.mem.eql(u8, raw, "dump")) return .dump;
+    if (std.mem.eql(u8, raw, "delta")) return .delta;
+    if (std.mem.eql(u8, raw, "apply")) return .apply;
+    var buf: [256]u8 = undefined;
+    const msg = std.fmt.bufPrint(&buf, "action={s}", .{raw}) catch "action=<invalid>";
+    fatal(stderr, "FATAL_ERROR_BAD_ARG", msg);
+}
 
-fn validKey(
-    comptime start_table: *const [256]bool,
-    comptime rest_table: *const [256]bool,
-    k: []const u8,
-) bool {
-    if (k.len == 0 or !start_table[k[0]]) return false;
-    for (k[1..]) |c| if (!rest_table[c]) return false;
+fn parseBom(stderr: *Io.Writer, format: []const u8, raw_opt: ?[]const u8) BomMode {
+    const raw = raw_opt orelse if (std.mem.eql(u8, format, "native")) "literal" else "strip";
+
+    if (std.mem.eql(u8, raw, "literal")) return .literal;
+    if (std.mem.eql(u8, raw, "strip")) return .strip;
+    if (std.mem.eql(u8, raw, "reject")) return .reject;
+
+    var buf: [256]u8 = undefined;
+    const msg = std.fmt.bufPrint(&buf, "ENVFILE_BOM={s}", .{raw}) catch "ENVFILE_BOM=<invalid>";
+    fatal(stderr, "FATAL_ERROR_BAD_ENVFILE_VALUE", msg);
+}
+
+fn isIdentifierStart(c: u8) bool {
+    return (c >= 'A' and c <= 'Z') or (c >= 'a' and c <= 'z') or c == '_';
+}
+
+fn isIdentifierRest(c: u8) bool {
+    return isIdentifierStart(c) or (c >= '0' and c <= '9');
+}
+
+fn isShellKeyStart(c: u8) bool {
+    return (c >= 'A' and c <= 'Z') or (c >= 'a' and c <= 'z') or c == '_';
+}
+
+fn isShellKeyRest(c: u8) bool {
+    return isShellKeyStart(c) or (c >= '0' and c <= '9');
+}
+
+fn isWhitespace(c: u8) bool {
+    return c == ' ' or c == '\t' or c == '\n' or c == '\r' or c == 0x0b or c == 0x0c;
+}
+
+fn validShellKey(key: []const u8) bool {
+    if (key.len == 0 or !isShellKeyStart(key[0])) return false;
+    for (key[1..]) |c| if (!isShellKeyRest(c)) return false;
     return true;
 }
 
-fn validNativeKey(k: []const u8) bool {
-    return validKey(&native_key_start, &native_key_rest, k);
+fn trimTrailingCR(line: []const u8) []const u8 {
+    if (line.len > 0 and line[line.len - 1] == '\r') return line[0 .. line.len - 1];
+    return line;
 }
 
-fn validShellKey(k: []const u8) bool {
-    return validKey(&shell_key_start, &shell_key_rest, k);
+fn isBlank(line: []const u8) bool {
+    for (line) |c| if (!isWhitespace(c)) return false;
+    return true;
 }
 
-fn hasBadValueByte(v: []const u8) bool {
-    for (v) |c| if (bad_val_table[c]) return true;
+fn containsBadShellValueByte(value: []const u8) bool {
+    for (value) |c| {
+        if (c == ' ' or c == '\t' or c == '\'' or c == '"' or c == '\\') return true;
+    }
     return false;
 }
 
-// --- counts ---
-
-const Counts = struct {
-    checked:  u32 = 0,
-    errors:   u32 = 0,
-};
-
-// --- native core: slurp and scan ---
-
-// Returns (checked, errors) for one record slice (no newline).
-fn nativeRecord(
-    line:      []const u8,
-    tag:       []const u8,
-    n:         u32,
-    diag:      *Io.Writer,
-    norm:      *Io.Writer,
-    normalize: bool,
-) !struct { u32, u32 } {
-    if (std.mem.indexOfScalar(u8, line, 0) != null) {
-        diag.print("{s}: {s}:{d}\n", .{ ERROR_VALUE_INVALID_CHAR, tag, n }) catch {};
-        return .{ 1, 1 };
-    }
-
-    var blank = true;
-    for (line) |c| if (!std.ascii.isWhitespace(c)) { blank = false; break; };
-    if (blank or line[0] == '#') return .{ 0, 0 };
-
-    const eq = std.mem.indexOfScalar(u8, line, '=') orelse {
-        diag.print("{s}: {s}:{d}\n", .{ ERROR_NO_EQUALS, tag, n }) catch {};
-        return .{ 1, 1 };
-    };
-    const k = line[0..eq];
-    const v = line[eq + 1..];
-
-    if (k.len == 0) {
-        diag.print("{s}: {s}:{d}\n", .{ ERROR_EMPTY_KEY, tag, n }) catch {};
-        return .{ 1, 1 };
-    }
-    if (!validNativeKey(k)) {
-        diag.print("{s}: {s}:{d}\n", .{ ERROR_KEY_INVALID, tag, n }) catch {};
-        return .{ 1, 1 };
-    }
-    if (normalize) try norm.print("{s}={s}\n", .{ k, v });
-    return .{ 1, 0 };
-}
-
-fn nativeScan(
-    buf:       []const u8,
-    tag:       []const u8,
-    diag:      *Io.Writer,
-    norm:      *Io.Writer,
-    normalize: bool,
-    counts:    *Counts,
-    n:         *u32,
-) !void {
-    var pos: usize = 0;
-    while (pos <= buf.len) {
-        const nl  = std.mem.indexOfScalarPos(u8, buf, pos, '\n');
-        const end = if (nl) |i| i else buf.len;
-        if (end > pos or nl != null) {
-            n.* += 1;
-            const chk, const err = try nativeRecord(buf[pos..end], tag, n.*, diag, norm, normalize);
-            counts.checked += chk;
-            counts.errors  += err;
-        }
-        if (nl == null) break;
-        pos = end + 1;
-    }
-}
-
-// --- shell core: line-oriented ---
-
-const LineResult = struct {
-    diag:  ?[]const u8 = null,
-    fatal: bool        = false,
-    val:   []const u8  = "",
-};
-
-fn shellLine(line: []const u8) LineResult {
-    if (std.mem.indexOfScalar(u8, line, 0) != null) {
-        return .{ .diag = ERROR_VALUE_INVALID_CHAR, .fatal = true };
-    }
-
-    const eq = std.mem.indexOfScalar(u8, line, '=') orelse return .{ .diag = ERROR_NO_EQUALS,               .fatal = true };
-    const k  = line[0..eq];
-    const v  = line[eq + 1..];
-
-    if (k.len > 0 and std.ascii.isWhitespace(k[0]))       return .{ .diag = ERROR_KEY_LEADING_WHITESPACE,   .fatal = true };
-    if (k.len > 0 and std.ascii.isWhitespace(k[k.len-1])) return .{ .diag = ERROR_KEY_TRAILING_WHITESPACE,  .fatal = true };
-    if (v.len > 0 and std.ascii.isWhitespace(v[0]))        return .{ .diag = ERROR_VALUE_LEADING_WHITESPACE, .fatal = true };
-    if (k.len == 0)                                        return .{ .diag = ERROR_EMPTY_KEY,               .fatal = true };
-    if (!validShellKey(k))                                 return .{ .diag = ERROR_KEY_INVALID,              .fatal = true };
-
-    const val = val: {
-        if (v.len == 0) break :val v;
-        const q = v[0];
-        if (q == '"' or q == '\'') {
-            const rest = v[1..];
-            const pos  = std.mem.indexOfScalar(u8, rest, q) orelse
-                return .{ .diag = if (q == '"') ERROR_DOUBLE_QUOTE_UNTERMINATED else ERROR_SINGLE_QUOTE_UNTERMINATED, .fatal = true };
-            if (rest[pos + 1..].len > 0) return .{ .diag = ERROR_TRAILING_CONTENT, .fatal = true };
-            break :val rest[0..pos];
-        }
-        if (hasBadValueByte(v)) return .{ .diag = ERROR_VALUE_INVALID_CHAR, .fatal = true };
-        break :val v;
-    };
-
-    return .{ .val = val };
-}
-
-// --- IO helpers ---
-
-fn isBlank(line: []const u8) bool {
-    for (line) |c| if (!std.ascii.isWhitespace(c)) return false;
-    return true;
+fn isContinuation(line: []const u8) bool {
+    var i = line.len;
+    var n: usize = 0;
+    while (i > 0 and line[i - 1] == '\\') : (i -= 1) n += 1;
+    return (n % 2) == 1;
 }
 
 fn openPath(path: []const u8, io: Io) !Io.File {
@@ -182,137 +180,381 @@ fn openPath(path: []const u8, io: Io) !Io.File {
     return std.Io.Dir.cwd().openFile(io, path, .{});
 }
 
-// --- file linting ---
-
-fn lintNative(
-    path:      []const u8,
-    io:        Io,
-    norm:      *Io.Writer,
-    diag:      *Io.Writer,
-    normalize: bool,
-    counts:    *Counts,
-) !void {
-    const file = openPath(path, io) catch |err| {
-        diag.print("lint: {s}: {}\n", .{ path, err }) catch {};
-        counts.errors += 1;
-        return;
-    };
+fn readAllPath(allocator: std.mem.Allocator, io: Io, path: []const u8) ![]u8 {
+    const file = try openPath(path, io);
     defer if (!std.mem.eql(u8, path, "-")) file.close(io);
 
-    var read_buf: [4096]u8 = undefined;
-    var fr: Io.File.Reader = .initStreaming(file, io, &read_buf);
+    var reader_buf: [4096]u8 = undefined;
+    var fr: Io.File.Reader = .initStreaming(file, io, &reader_buf);
     const r = &fr.interface;
 
-    var buf: [65536]u8 = undefined;
+    var out: std.ArrayList(u8) = .empty;
+    errdefer out.deinit(allocator);
 
-    var tail: usize = 0; // bytes carried over from previous chunk
-    var line_n: u32 = 0; // line counter, passed into nativeScan by ref
-
+    var tmp: [4096]u8 = undefined;
     while (true) {
-        const n = r.readSliceShort(buf[tail..]) catch |err| switch (err) {
+        const n = r.readSliceShort(tmp[0..]) catch |err| switch (err) {
             error.ReadFailed => return err,
         };
-        const filled = tail + n;
-        const eof = n == 0;
+        if (n == 0) break;
+        try out.appendSlice(allocator, tmp[0..n]);
+    }
+    return out.toOwnedSlice(allocator);
+}
 
-        if (filled == 0) break;
+fn splitLines(allocator: std.mem.Allocator, buf: []u8) !std.ArrayList([]const u8) {
+    var lines: std.ArrayList([]const u8) = .empty;
+    var start: usize = 0;
+    var i: usize = 0;
+    while (i < buf.len) : (i += 1) {
+        if (buf[i] == '\n') {
+            try lines.append(allocator, buf[start..i]);
+            start = i + 1;
+        }
+    }
+    if (start < buf.len) try lines.append(allocator, buf[start..]);
+    return lines;
+}
 
-        if (eof) {
-            // no trailing newline: process final record as-is
-            try nativeScan(buf[0..filled], path, diag, norm, normalize, counts, &line_n);
+fn substValue(
+    allocator: std.mem.Allocator,
+    value: []const u8,
+    path: []const u8,
+    lineno: u32,
+    env: *const EnvStore,
+    stderr: *Io.Writer,
+    counts: *Counts,
+) ![]const u8 {
+    var out: std.ArrayList(u8) = .empty;
+    errdefer out.deinit(allocator);
+
+    var i: usize = 0;
+    while (i < value.len) {
+        const rel = std.mem.indexOfScalarPos(u8, value, i, '$');
+        if (rel == null) {
+            try out.appendSlice(allocator, value[i..]);
             break;
         }
 
-        // find last newline so we only process complete records
-        const last_nl = std.mem.lastIndexOfScalar(u8, buf[0..filled], '\n');
-        if (last_nl == null) {
-            // entire buffer is one partial record — too long to handle
-            diag.print("ERROR_LINE_TOO_LONG: {s}\n", .{path}) catch {};
-            counts.errors += 1;
-            return;
+        const pos = rel.?;
+        try out.appendSlice(allocator, value[i..pos]);
+
+        const after = pos + 1;
+        if (after >= value.len) {
+            try out.append(allocator, '$');
+            break;
         }
 
-        const complete = last_nl.? + 1;
-        try nativeScan(buf[0..complete], path, diag, norm, normalize, counts, &line_n);
+        if (value[after] == '{') {
+            const tail = value[after + 1 ..];
+            const close_rel = std.mem.indexOfScalar(u8, tail, '}');
+            if (close_rel == null) {
+                try out.append(allocator, '$');
+                try out.appendSlice(allocator, value[after..]);
+                break;
+            }
+            const close = close_rel.?;
+            const name = tail[0..close];
+            i = after + 1 + close + 1;
 
-        // move unfinished tail to front
-        tail = filled - complete;
-        std.mem.copyForwards(u8, buf[0..tail], buf[complete..filled]);
+            if (env.get(name)) |v| {
+                try out.appendSlice(allocator, v);
+            } else {
+                try stderr.print("LINE_ERROR_UNBOUND_REF ({s}): {s}:{d}\n", .{ name, path, lineno });
+                counts.errors += 1;
+            }
+            continue;
+        }
+
+        if (!isIdentifierStart(value[after])) {
+            try out.append(allocator, '$');
+            i = after;
+            continue;
+        }
+
+        var end = after + 1;
+        while (end < value.len and isIdentifierRest(value[end])) : (end += 1) {}
+        const name = value[after..end];
+        i = end;
+
+        if (env.get(name)) |v| {
+            try out.appendSlice(allocator, v);
+        } else {
+            try stderr.print("LINE_ERROR_UNBOUND_REF ({s}): {s}:{d}\n", .{ name, path, lineno });
+            counts.errors += 1;
+        }
     }
+
+    return out.toOwnedSlice(allocator);
 }
 
-fn lintShell(
-    path:      []const u8,
-    io:        Io,
-    norm:      *Io.Writer,
-    diag:      *Io.Writer,
-    normalize: bool,
-    counts:    *Counts,
+fn handleRecord(
+    allocator: std.mem.Allocator,
+    action: Action,
+    native: bool,
+    key: []const u8,
+    raw_value: []const u8,
+    value: []const u8,
+    path: []const u8,
+    lineno: u32,
+    env: *EnvStore,
+    stderr: *Io.Writer,
+    stdout: *Io.Writer,
+    counts: *Counts,
 ) !void {
-    const file = openPath(path, io) catch |err| {
-        diag.print("lint: {s}: {}\n", .{ path, err }) catch {};
+    switch (action) {
+        .dump => {
+            try stdout.print("{s}={s}\n", .{ key, value });
+            return;
+        },
+        .validate, .normalize => return,
+        .delta, .apply => {},
+    }
+
+    var resolved = value;
+    if (native or !(raw_value.len > 0 and raw_value[0] == '\'')) {
+        resolved = try substValue(allocator, value, path, lineno, env, stderr, counts);
+    }
+
+    try env.set(key, resolved);
+    if (action == .delta) try stdout.print("{s}={s}\n", .{ key, resolved });
+}
+
+fn processOneFile(
+    allocator: std.mem.Allocator,
+    io: Io,
+    path: []const u8,
+    action: Action,
+    native: bool,
+    bom: BomMode,
+    crlf: []const u8,
+    nul: []const u8,
+    cont: []const u8,
+    env: *EnvStore,
+    stdout: *Io.Writer,
+    stderr: *Io.Writer,
+    counts: *Counts,
+) !void {
+    const buf = readAllPath(allocator, io, path) catch {
+        try stderr.print("FILE_ERROR_FILE_UNREADABLE: {s}\n", .{path});
         counts.errors += 1;
         return;
     };
-    defer if (!std.mem.eql(u8, path, "-")) file.close(io);
 
-    var buf: [65536]u8 = undefined;
-    var fr: Io.File.Reader = .init(file, io, &buf);
-    const r = &fr.interface;
+    if (std.mem.eql(u8, nul, "reject") and std.mem.indexOfScalar(u8, buf, 0) != null) {
+        try stderr.print("FILE_ERROR_NUL: {s}\n", .{path});
+        counts.errors += 1;
+        return;
+    }
 
-    var n: u32 = 0;
-    while (try r.takeDelimiter('\n')) |raw| {
-        n += 1;
-        const line = std.mem.trimEnd(u8, raw, "\r");
-        if (isBlank(line) or (line.len > 0 and line[0] == '#')) continue;
+    var lines = try splitLines(allocator, buf);
+
+    if (lines.items.len > 0 and std.mem.startsWith(u8, lines.items[0], "\xEF\xBB\xBF")) {
+        switch (bom) {
+            .reject => {
+                try stderr.print("FILE_ERROR_BOM: {s}\n", .{path});
+                counts.errors += 1;
+                return;
+            },
+            .strip => {
+                lines.items[0] = lines.items[0][3..];
+            },
+            .literal => {},
+        }
+    }
+
+    if (std.mem.eql(u8, crlf, "strip")) {
+        var all_crlf = true;
+        for (lines.items) |line| {
+            if (line.len == 0 or line[line.len - 1] != '\r') {
+                all_crlf = false;
+                break;
+            }
+        }
+        if (all_crlf) {
+            for (lines.items) |*line| line.* = line.*[0 .. line.len - 1];
+        }
+    }
+
+    var proc_lines: std.ArrayList([]const u8) = .empty;
+    var proc_lineno: std.ArrayList(u32) = .empty;
+
+    if (std.mem.eql(u8, cont, "accept")) {
+        var i: usize = 0;
+        while (i < lines.items.len) {
+            var line = lines.items[i];
+            var lineno: u32 = @intCast(i + 1);
+            i += 1;
+            if (isContinuation(line)) {
+                var joined: std.ArrayList(u8) = .empty;
+                defer joined.deinit(allocator);
+                try joined.appendSlice(allocator, line[0 .. line.len - 1]);
+
+                while (i < lines.items.len) {
+                    const next = lines.items[i];
+                    lineno = @intCast(i + 1);
+                    i += 1;
+                    if (isContinuation(next)) {
+                        try joined.appendSlice(allocator, next[0 .. next.len - 1]);
+                    } else {
+                        try joined.appendSlice(allocator, next);
+                        break;
+                    }
+                }
+                line = try joined.toOwnedSlice(allocator);
+            }
+            try proc_lines.append(allocator, line);
+            try proc_lineno.append(allocator, lineno);
+        }
+    } else {
+        for (lines.items, 0..) |line, i| {
+            try proc_lines.append(allocator, line);
+            try proc_lineno.append(allocator, @intCast(i + 1));
+        }
+    }
+
+    for (proc_lines.items, 0..) |line, idx| {
+        const lineno = proc_lineno.items[idx];
+        const trimmed = trimTrailingCR(line);
+        if (isBlank(trimmed) or (trimmed.len > 0 and trimmed[0] == '#')) continue;
+
         counts.checked += 1;
 
-        const eq = std.mem.indexOfScalar(u8, line, '=') orelse 0;
-        const k  = line[0..eq];
-        const sr = shellLine(line);
-        if (sr.diag) |code| {
-            diag.print("{s}: {s}:{d}\n", .{ code, path, n }) catch {};
-            if (sr.fatal) { counts.errors += 1; continue; }
+        const eq_raw = std.mem.indexOfScalar(u8, line, '=') orelse {
+            try stderr.print("LINE_ERROR_NO_EQUALS: {s}:{d}\n", .{ path, lineno });
+            counts.errors += 1;
+            continue;
+        };
+
+        const raw_key = line[0..eq_raw];
+        const raw_value = line[eq_raw + 1 ..];
+
+        if (action == .normalize) {
+            try stdout.print("{s}={s}\n", .{ raw_key, raw_value });
+            continue;
         }
-        if (normalize) try norm.print("{s}={s}\n", .{ k, sr.val });
+
+        const work = if (native) line else trimmed;
+        const eq = std.mem.indexOfScalar(u8, work, '=') orelse {
+            try stderr.print("LINE_ERROR_NO_EQUALS: {s}:{d}\n", .{ path, lineno });
+            counts.errors += 1;
+            continue;
+        };
+
+        const key = work[0..eq];
+        const value = work[eq + 1 ..];
+
+        if (native) {
+            if (key.len == 0) {
+                try stderr.print("LINE_ERROR_EMPTY_KEY: {s}:{d}\n", .{ path, lineno });
+                counts.errors += 1;
+                continue;
+            }
+            try handleRecord(allocator, action, true, key, raw_value, value, path, lineno, env, stderr, stdout, counts);
+            continue;
+        }
+
+        if (key.len > 0 and isWhitespace(key[0])) {
+            try stderr.print("LINE_ERROR_KEY_LEADING_WHITESPACE: {s}:{d}\n", .{ path, lineno });
+            counts.errors += 1;
+            continue;
+        }
+        if (key.len > 0 and isWhitespace(key[key.len - 1])) {
+            try stderr.print("LINE_ERROR_KEY_TRAILING_WHITESPACE: {s}:{d}\n", .{ path, lineno });
+            counts.errors += 1;
+            continue;
+        }
+        if (value.len > 0 and isWhitespace(value[0])) {
+            try stderr.print("LINE_ERROR_VALUE_LEADING_WHITESPACE: {s}:{d}\n", .{ path, lineno });
+            counts.errors += 1;
+            continue;
+        }
+        if (key.len == 0) {
+            try stderr.print("LINE_ERROR_EMPTY_KEY: {s}:{d}\n", .{ path, lineno });
+            counts.errors += 1;
+            continue;
+        }
+        if (!validShellKey(key)) {
+            try stderr.print("LINE_ERROR_KEY_INVALID: {s}:{d}\n", .{ path, lineno });
+            counts.errors += 1;
+            continue;
+        }
+
+        var out_value = value;
+        if (value.len > 0) {
+            const c = value[0];
+            if (c == '"' or c == '\'') {
+                const rest = value[1..];
+                const close_pos = std.mem.indexOfScalar(u8, rest, c) orelse {
+                    const code = if (c == '"') "LINE_ERROR_DOUBLE_QUOTE_UNTERMINATED" else "LINE_ERROR_SINGLE_QUOTE_UNTERMINATED";
+                    try stderr.print("{s}: {s}:{d}\n", .{ code, path, lineno });
+                    counts.errors += 1;
+                    continue;
+                };
+                if (close_pos + 1 < rest.len) {
+                    try stderr.print("LINE_ERROR_TRAILING_CONTENT: {s}:{d}\n", .{ path, lineno });
+                    counts.errors += 1;
+                    continue;
+                }
+                out_value = rest[0..close_pos];
+            } else if (containsBadShellValueByte(value)) {
+                try stderr.print("LINE_ERROR_VALUE_INVALID_CHAR: {s}:{d}\n", .{ path, lineno });
+                counts.errors += 1;
+                continue;
+            }
+        }
+
+        try handleRecord(allocator, action, false, key, raw_value, out_value, path, lineno, env, stderr, stdout, counts);
     }
 }
 
-// --- main ---
-
 pub fn main(init: std.process.Init) !void {
-    const io    = init.io;
+    const io = init.io;
     const arena = init.arena.allocator();
 
-    const format    = init.environ_map.get("ENVFILE_FORMAT") orelse "shell";
-    const action    = init.environ_map.get("ENVFILE_ACTION") orelse "validate";
-    const native    = std.mem.eql(u8, format, "native");
-    const normalize = std.mem.eql(u8, action, "normalize");
+    var out_buf: [65536]u8 = undefined;
+    var out_writer: Io.File.Writer = .init(.stdout(), io, &out_buf);
+    const stdout = &out_writer.interface;
 
-    var norm_buf: [65536]u8 = undefined;
-    var norm_writer: Io.File.Writer = .init(.stdout(), io, &norm_buf);
-    const norm = &norm_writer.interface;
+    var err_buf: [4096]u8 = undefined;
+    var err_writer: Io.File.Writer = .init(.stderr(), io, &err_buf);
+    const stderr = &err_writer.interface;
 
-    var diag_buf: [4096]u8 = undefined;
-    var diag_writer: Io.File.Writer = .init(.stderr(), io, &diag_buf);
-    const diag = &diag_writer.interface;
+    const format = init.environ_map.get("ENVFILE_FORMAT") orelse "shell";
+    const native = std.mem.eql(u8, format, "native");
+    const action = parseAction(stderr, init.environ_map.get("ENVFILE_ACTION") orelse "validate");
+    const bom = parseBom(stderr, format, init.environ_map.get("ENVFILE_BOM"));
+    const crlf = init.environ_map.get("ENVFILE_CRLF") orelse "ignore";
+    const nul = init.environ_map.get("ENVFILE_NUL") orelse "reject";
+    const cont = init.environ_map.get("ENVFILE_BACKSLASH_CONTINUATION") orelse "ignore";
 
-    const args  = try init.minimal.args.toSlice(arena);
-    const files = if (args.len > 1) args[1..] else &[_][]const u8{"-"};
-
-    var total = Counts{};
-    for (files) |path| {
-        var c = Counts{};
-        if (native) try lintNative(path, io, norm, diag, normalize, &c)
-        else        try lintShell(path, io,      norm, diag, normalize, &c);
-        total.checked  += c.checked;
-        total.errors   += c.errors;
+    if (native and bom != .literal) {
+        var msg_buf: [256]u8 = undefined;
+        const b = switch (bom) {
+            .literal => "literal",
+            .strip => "strip",
+            .reject => "reject",
+        };
+        const msg = std.fmt.bufPrint(&msg_buf, "format=native ENVFILE_BOM={s}", .{b}) catch "format=native ENVFILE_BOM=<invalid>";
+        fatal(stderr, "FATAL_ERROR_UNSUPPORTED", msg);
     }
 
-    try diag.print("{d} checked, {d} errors\n",
-        .{ total.checked, total.errors });
-    norm.flush() catch {};
-    diag.flush() catch {};
+    var env_store = EnvStore.init(arena);
+    if (action == .delta or action == .apply) try env_store.seedFromProcess(init.environ_map);
 
-    if (total.errors > 0) std.process.exit(1);
+    const args = try init.minimal.args.toSlice(arena);
+    const files = if (args.len > 1) args[1..] else &[_][]const u8{"-"};
+
+    var counts = Counts{};
+    for (files) |path| {
+        try processOneFile(arena, io, path, action, native, bom, crlf, nul, cont, &env_store, stdout, stderr, &counts);
+    }
+
+    if (action == .apply) try env_store.emitSorted(stdout);
+
+    try stderr.print("{d} checked, {d} errors\n", .{ counts.checked, counts.errors });
+    stdout.flush() catch {};
+    stderr.flush() catch {};
+
+    if (counts.errors > 0) std.process.exit(1);
 }

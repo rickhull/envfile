@@ -1,1 +1,9 @@
-bench.py
+#!/bin/sh
+SCRIPT_DIR=${0%/*}
+[ "$SCRIPT_DIR" = "$0" ] && SCRIPT_DIR=.
+
+if [ -x "$SCRIPT_DIR/bench.c" ]; then
+  exec "$SCRIPT_DIR/bench.c" "$@"
+else
+  exec python3 "$SCRIPT_DIR/bench.py" "$@"
+fi

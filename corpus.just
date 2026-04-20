@@ -183,17 +183,15 @@ filter:
   filtered_file = "{{filtered_file}}"
 
   def find_validator():
-    result = subprocess.run(["bin/lang", "list", "built"], capture_output=True, text=True)
+    result = subprocess.run(["lang", "list", "built"], capture_output=True, text=True)
     for lang in result.stdout.splitlines():
-      r = subprocess.run(["bin/lang", lang, "envfile"], capture_output=True, text=True)
+      r = subprocess.run(["envfile", f"language={lang}"], capture_output=True, text=True)
       if r.returncode == 0:
-        path = r.stdout.strip()
-        if os.access(path, os.X_OK):
-          return path
+        return ["envfile", f"language={lang}"]
     return None
 
-  validator = find_validator()
-  if validator is None:
+  validator_cmd = find_validator()
+  if validator_cmd is None:
     print("filter: \tno native validator found — run `make c` or similar", file=sys.stderr)
     raise SystemExit(1)
 
@@ -224,7 +222,7 @@ filter:
       if path in seen_logical:
         skipped += 1
         continue
-      r = subprocess.run([validator, path], capture_output=True)
+      r = subprocess.run(validator_cmd + [path], capture_output=True)
       output = r.stderr.decode("utf-8", errors="replace") + r.stdout.decode("utf-8", errors="replace")
       m = summary_re.search(output)
       if not m:
@@ -243,7 +241,7 @@ filter:
       out.write(path + "\n")
       accepted += 1
 
-  msg = f"Accepted {accepted} files, {validator} skipped {skipped}"
+  msg = f"Accepted {accepted} files, skipped {skipped}"
   print(f"filter: \t{msg}")
   print(f"\t\tWrote {filtered_file}")
 

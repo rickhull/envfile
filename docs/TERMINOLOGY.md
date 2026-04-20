@@ -13,6 +13,7 @@ Key-value pairs where the value is one of a fixed set:
 |------------|-------------------------------------|--------------------------------|
 | `format`   | `shell` `native` `compat`                      |                                |
 | `action`   | `normalize` `validate` `dump` `delta` `apply`  |                                |
+| `envfile_bom` | `literal` `strip` `reject`                   | normalize BOM policy           |
 | `execution`| `built` `scripted`                             |                                |
 | `files`    | `fixtures` `corpus`                            | bench input source             |
 | `mode`     | `now` `fast`                                   | build optimization level       |
@@ -398,7 +399,7 @@ and shares its base name.
 shell/accepted/accepted.env       ← fixture
 shell/accepted/accepted.err       ← sidecar (golden file for stderr)
 shell/normalize/bom.env           ← fixture
-shell/normalize/bom.BOM=warn.err  ← sidecar (golden file for a specific mode)
+shell/normalize/bom.BOM=literal.err  ← sidecar (golden file for a specific mode)
 ```
 
 `sidecar` describes *where the file lives*. `golden file` describes *what it is*.

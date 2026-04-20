@@ -34,14 +34,14 @@ policy checks as long as they remain non-syntactic.
 
 Examples of warning-worthy content:
 
-- BOM at byte 0 when policy chooses `warn`
+- BOM at byte 0, if warning policy opts in separately from normalize mode
 - unusual bytes that are still technically representable
 - values that are legal but suspicious
 - records that are valid but violate a caller's preferred policy
 
 Existing warning class:
 
-- `WARNING_BOM` for a BOM-position prefix when BOM policy is `warn`
+- none (current contract has no warning diagnostics)
 
 The stage should not mutate the underlying record unless a policy layer
 explicitly asks it to do so.
@@ -83,7 +83,7 @@ implementation under different policy regimes.
 
 These are candidates, not commitments:
 
-- `WARNING_BOM` for a BOM-position prefix when BOM policy is `warn`
+- BOM-at-byte-0 policy warnings, if we choose to add a warning class later
 - shell-format lowercase keys, if we want shell to accept-and-warn instead of
   accept-and-ignore
 - shell-format suspicious but representable value content

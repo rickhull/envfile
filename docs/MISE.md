@@ -36,7 +36,7 @@ implementations will be skipped if `nasm` is absent.
 ## bin/lang
 
 `bin/lang` is a POSIX sh script that reads `languages.env` and reports
-language metadata and resolved implementation paths.
+language metadata plus runnable implementation paths.
 
 ### Query mode
 
@@ -52,7 +52,7 @@ resolved fields are also available:
 | field       | value                                    |
 |-------------|------------------------------------------|
 | `which`     | resolved executable path on `PATH`       |
-| `envfile`   | repo-local implementation path           |
+| `envfile`   | runnable repo-local implementation path  |
 
 Examples:
 
@@ -63,8 +63,9 @@ bin/lang bun mise         # → available
 ```
 
 `bin/lang` does not shell out through `mise exec`. The `mise` metadata is
-used for availability reporting and documentation, while actual resolution is
-driven by the executable currently on `PATH`.
+used for availability reporting and documentation, while actual resolution
+is driven by the executable currently on `PATH` and, for compiled targets,
+an on-demand `make` build.
 
 ### Resolution logic
 
@@ -77,5 +78,7 @@ For languages without a `mise` field (`cc`, `nasm`, `awk`, `bash`, etc.),
 the same PATH-only resolution applies.
 
 This means contributors with mise can opt into pinned versions via the
-surrounding toolchain, but `bin/lang` itself stays PATH-based. The worst-case
-probe (tool missing) is just the `command -v` failure path and is cheap.
+surrounding toolchain, but `bin/lang` itself stays cheap and local. For
+scripted targets, missing runtimes are reported as unavailable. For compiled
+targets, missing binaries trigger an on-demand build; if the build tool is
+absent, that language is also reported as unavailable.

@@ -35,18 +35,17 @@ Each pass is controlled by an `ENVFILE_*` env var:
 
 | Pass         | Env var                          | Values                | Default  | Formats        |
 |--------------|----------------------------------|-----------------------|----------|----------------|
-| BOM          | `ENVFILE_BOM`                    | `reject` `warn` `strip` | `warn`   | shell, compat  |
+| BOM          | `ENVFILE_BOM`                    | `literal` `strip` `reject` | `strip`  | shell, compat  |
 | CRLF         | `ENVFILE_CRLF`                   | `strip` `ignore`        | `ignore` | all            |
 | NUL          | `ENVFILE_NUL`                    | `reject` `ignore`       | `reject` | all            |
 | continuation | `ENVFILE_BACKSLASH_CONTINUATION` | `accept` `ignore`       | `ignore` | shell, compat  |
 
 Pass details:
 
-- **BOM** — UTF-8 BOM (`\xEF\xBB\xBF`) at byte 0: `warn` strips and warns;
+- **BOM** — UTF-8 BOM (`\xEF\xBB\xBF`) at byte 0: `literal` leaves bytes as-is;
   `strip` strips silently; `reject` treats the BOM as a file-error prepass.
-  Shell
-  and compat only — for `native`, BOM handling is unsupported at dispatch
-  time, because native treats the file literally and does not apply BOM
+  Shell and compat only — for `native`, only `literal` is supported at
+  dispatch time because native treats the file literally and does not apply BOM
   preprocessing.
 
 - **CRLF** — `strip`: whole-file scan; convert only if *all* line endings are
@@ -127,7 +126,7 @@ Typical shapes by implementation type:
 
 | Stage     | shell                                   | native                               | compat (planned)              |
 |-----------|-----------------------------------------|--------------------------------------|-------------------------------|
-| normalize | BOM, CRLF (whole-file scan), NUL-reject, continuation | BOM, CRLF (whole-file scan), NUL-reject | BOM, CRLF (whole-file scan), NUL-reject, continuation |
+| normalize | BOM, CRLF (whole-file scan), NUL-reject, continuation | CRLF (whole-file scan), NUL-reject | BOM, CRLF (whole-file scan), NUL-reject, continuation |
 | validate  | key charset, quoting rules              | non-empty name, literal values       | relaxed quoting               |
 | dump      | strip quotes, `\\` `\"`                 | identity                             | backslash escapes             |
 | delta     | subst in double-quoted only             | identity                             | full subst                    |
@@ -150,7 +149,7 @@ Full `ENVFILE_*` var set forwarded to impls:
 ```
 ENVFILE_FORMAT          shell|native|compat
 ENVFILE_ACTION          normalize|validate|dump|delta|apply
-ENVFILE_BOM                     reject|warn|strip
+ENVFILE_BOM                     literal|strip|reject
 ENVFILE_CRLF                    strip|ignore
 ENVFILE_NUL                     reject|ignore
 ENVFILE_BACKSLASH_CONTINUATION  accept|ignore

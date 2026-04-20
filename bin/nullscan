@@ -1,1 +1,9 @@
-nullscan.awk
+#!/bin/sh
+SCRIPT_DIR=${0%/*}
+[ "$SCRIPT_DIR" = "$0" ] && SCRIPT_DIR=.
+
+if [ -x "$SCRIPT_DIR/nullscan.c" ]; then
+  exec "$SCRIPT_DIR/nullscan.c" "$@"
+else
+  exec awk -f "$SCRIPT_DIR/nullscan.awk" "$@"
+fi

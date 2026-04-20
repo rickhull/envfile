@@ -4,8 +4,6 @@ bin/*.c
 bin/*.rs
 bin/*.zig
 bin/*.go
-bin/bench
-bin/nullscan
 
 # temporary corpus generation files
 corpus/*.txt

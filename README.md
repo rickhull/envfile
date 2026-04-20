@@ -19,7 +19,7 @@ Normalize pass configuration (all formats unless noted):
 
 | Variable | Values | Default | Formats |
 |---|---|---|---|
-| `ENVFILE_BOM` | `reject` `warn` `strip` | `warn` | shell, compat |
+| `ENVFILE_BOM` | `literal` `strip` `reject` | `strip` | shell, compat |
 | `ENVFILE_CRLF` | `strip` `ignore` | `ignore` | all |
 | `ENVFILE_NUL` | `reject` `ignore` | `reject` | all |
 | `ENVFILE_BACKSLASH_CONTINUATION` | `accept` `ignore` | `ignore` | shell, compat |
@@ -59,7 +59,7 @@ For normalize fixtures, which require different `ENVFILE_*` options per test
 case, sidecars are named `<base>.<mode-label>.err` and `<base>.<mode-label>.out`:
 
 ```
-shell/normalize/bom.BOM=warn.err
+shell/normalize/bom.BOM=literal.err
 shell/normalize/crlf.CRLF=strip.out
 native/normalize/nul.NUL=ignore.out
 ```
@@ -78,8 +78,8 @@ just shell::check-bash          # semantic cross-check: bash must agree on accep
 All recipes accept an optional implementation argument:
 
 ```sh
-just shell::verify bin/envfile.c
-just native::verify-normalize bin/envfile.awk bin/envfile.c
+just shell::verify c
+just native::verify-normalize awk c
 ```
 
 Regenerate golden files after intentional behavior changes, then review
@@ -125,8 +125,8 @@ By the time an implementation is invoked, all configuration is resolved and
 forwarded as env vars. Implementations read env vars only — no ARGV parsing,
 no config file reading.
 
-Format-gating: `ENVFILE_BOM` and `ENVFILE_BACKSLASH_CONTINUATION=accept` are
-fatal errors for `format=native`.
+Format-gating: `ENVFILE_BOM` values other than `literal`, and
+`ENVFILE_BACKSLASH_CONTINUATION=accept`, are fatal errors for `format=native`.
 
 Default implementation search order: `awk`, then `perl`/`bash`/`python`/`sh`
 for shell; `awk`, `c`, `go`, `zig`, `bash`, `sh`, `perl` for native.
@@ -157,7 +157,9 @@ from `src/<language>/` (compiled):
 The C build uses a pluggable backend: `src/c/envfile.c` is the shared
 front-end; `src/c/backend.c` or `src/c/backend.asm` is selected at link time.
 
-`bin/lang <lang> envfile` resolves the repo executable path for a language.
+`bin/lang <lang> envfile` resolves a runnable repo implementation for a
+language, building compiled targets on demand and treating missing runtimes as
+unavailable.
 
 ## Build
 

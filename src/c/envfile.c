@@ -5,9 +5,11 @@
  * The backend is selected at link time:
  *   bin/envfile.c   links src/c/backend.c
  *   bin/envfile.asm links src/c/backend.asm
+ * Both backends implement the same tiny record-classifier ABI declared in
+ * src/c/envfile_backend.h, so the front-end never needs to know which one was
+ * linked in.
  *
  * Pipeline: normalize → validate → dump → delta → apply
- * delta and apply are not yet implemented in this front-end.
  */
 
 #include <stdio.h>
@@ -344,18 +346,10 @@ oom:
     return NULL;
 }
 
-static void emit_record(const EnvfileRecord *r, int raw) {
+static void emit_record(const EnvfileRecord *r) {
     fwrite(r->key, 1, r->key_len, stdout);
     fputc('=', stdout);
-    if (raw) fwrite(r->raw_value, 1, r->raw_value_len, stdout);
-    else     fwrite(r->value,     1, r->value_len,     stdout);
-    fputc('\n', stdout);
-}
-
-static void emit_binding(const char *key, const char *value) {
-    fputs(key, stdout);
-    fputc('=', stdout);
-    fputs(value, stdout);
+    fwrite(r->value, 1, r->value_len, stdout);
     fputc('\n', stdout);
 }
 
@@ -601,15 +595,14 @@ static void scan_stream(
             counts.checked++;
             if (status == ENVFILE_OK) {
                 if (action == ACTION_DUMP) {
-                    emit_record(&record, 0);
+                    emit_record(&record);
                 } else if (action == ACTION_DELTA || action == ACTION_APPLY) {
-                    const char *raw = (const char *)record.raw_value;
                     char *value = xstrndup((const char *)record.value, record.value_len);
                     char *resolved = NULL;
                     if (!value) {
                         fprintf(stderr, "envfile: out of memory: %s\n", tag);
                         counts.errors++;
-                    } else if (native || raw[0] != '\'') {
+                    } else if (native || record.value_kind != ENVFILE_VALUE_SINGLE_QUOTED) {
                         resolved = subst_value(value, tag, line_no, env, &counts);
                     } else {
                         resolved = value;
@@ -626,7 +619,12 @@ static void scan_stream(
                             pos = nl ? end + 1 : limit;
                             continue;
                         }
-                        if (action == ACTION_DELTA) emit_binding((const char *)record.key, resolved);
+                        if (action == ACTION_DELTA) {
+                            fwrite(record.key, 1, record.key_len, stdout);
+                            fputc('=', stdout);
+                            fputs(resolved, stdout);
+                            fputc('\n', stdout);
+                        }
                         free(resolved);
                     }
                     free(value);
@@ -710,10 +708,7 @@ static void process_file(
     /* BOM pre-pass */
     size_t data_start = 0;
     if (has_bom(fbuf, flen)) {
-        if (!bom_mode || strcmp(bom_mode, "warn") == 0) {
-            fprintf(stderr, "WARNING_BOM: %s\n", tag);
-            data_start = 3;
-        } else if (strcmp(bom_mode, "strip") == 0) {
+        if (strcmp(bom_mode, "strip") == 0) {
             data_start = 3;
         } else if (strcmp(bom_mode, "reject") == 0) {
             fprintf(stderr, "FILE_ERROR_BOM: %s\n", tag);
@@ -756,6 +751,17 @@ int main(int argc, char *argv[]) {
     if (!format) format = "shell";
 
     int native = strcmp(format, "native") == 0;
+    if (!bom_mode) bom_mode = native ? "literal" : "strip";
+    if (strcmp(bom_mode, "literal") != 0 &&
+        strcmp(bom_mode, "strip") != 0 &&
+        strcmp(bom_mode, "reject") != 0) {
+        fprintf(stderr, "FATAL_ERROR_BAD_ENVFILE_VALUE: ENVFILE_BOM=%s\n", bom_mode);
+        return 1;
+    }
+    if (native && strcmp(bom_mode, "literal") != 0) {
+        fprintf(stderr, "FATAL_ERROR_UNSUPPORTED: format=native ENVFILE_BOM=%s\n", bom_mode);
+        return 1;
+    }
     Action action = parse_action(action_str);
 
     /* CRLF: strip only when the whole file is CRLF-terminated */

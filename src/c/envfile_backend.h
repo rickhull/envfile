@@ -3,6 +3,18 @@
 
 #include <stddef.h>
 
+/* The front-end owns file I/O, normalization, environment handling, and
+ * actions.  The backend only classifies one already-delimited record at a time.
+ * C and ASM both implement the same ABI so the backend can be swapped at link
+ * time without changing the front-end.
+ */
+
+typedef enum {
+    ENVFILE_VALUE_PLAIN = 0,
+    ENVFILE_VALUE_SINGLE_QUOTED = 1,
+    ENVFILE_VALUE_DOUBLE_QUOTED = 2,
+} EnvfileValueKind;
+
 typedef enum {
     ENVFILE_SKIP = 0,
     ENVFILE_OK = 1,
@@ -18,13 +30,18 @@ typedef enum {
     ENVFILE_ERR_TRAILING_CONTENT = 19,
 } EnvfileStatus;
 
+/* Record layout shared by C and ASM:
+ *   key points at the original line buffer
+ *   value points at the parsed payload
+ *   value_len excludes wrapping quotes for shell records
+ *   value_kind tells the front-end whether shell substitution is allowed
+ */
 typedef struct {
     const unsigned char *key;
     size_t               key_len;
-    const unsigned char *value;      /* parsed: quotes stripped */
+    const unsigned char *value;      /* parsed payload */
     size_t               value_len;
-    const unsigned char *raw_value;  /* literal: as written in file */
-    size_t               raw_value_len;
+    EnvfileValueKind     value_kind;
 } EnvfileRecord;
 
 EnvfileStatus envfile_parse_shell(

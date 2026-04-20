@@ -3,7 +3,7 @@
 #
 # ENVFILE_FORMAT                shell|native|compat              (default: shell)
 # ENVFILE_ACTION                normalize|validate|dump|delta|apply  (default: validate)
-# ENVFILE_BOM                   reject|warn|strip                (default: warn)
+# ENVFILE_BOM                   literal|strip|reject             (default: strip for shell/compat; literal for native)
 # ENVFILE_CRLF                  strip|ignore                     (default: ignore)
 # ENVFILE_NUL                   reject|ignore                    (default: reject)
 # ENVFILE_BACKSLASH_CONTINUATION accept|ignore                   (default: ignore)
@@ -14,10 +14,19 @@
 BEGIN {
     format = ENVIRON["ENVFILE_FORMAT"]       != "" ? ENVIRON["ENVFILE_FORMAT"]       : "shell"
     action = ENVIRON["ENVFILE_ACTION"]       != "" ? ENVIRON["ENVFILE_ACTION"]       : "validate"
-    bom    = ENVIRON["ENVFILE_BOM"]                   != "" ? ENVIRON["ENVFILE_BOM"]                   : "warn"
+    bom    = ENVIRON["ENVFILE_BOM"]                   != "" ? ENVIRON["ENVFILE_BOM"]                   : (format == "native" ? "literal" : "strip")
     crlf   = ENVIRON["ENVFILE_CRLF"]                  != "" ? ENVIRON["ENVFILE_CRLF"]                  : "ignore"
     nul    = ENVIRON["ENVFILE_NUL"]                   != "" ? ENVIRON["ENVFILE_NUL"]                   : "reject"
     cont   = ENVIRON["ENVFILE_BACKSLASH_CONTINUATION"] != "" ? ENVIRON["ENVFILE_BACKSLASH_CONTINUATION"] : "ignore"
+
+    if (bom != "literal" && bom != "strip" && bom != "reject") {
+        printf "FATAL_ERROR_BAD_ENVFILE_VALUE: ENVFILE_BOM=%s\n", bom > "/dev/stderr"
+        exit 1
+    }
+    if (format == "native" && bom != "literal") {
+        printf "FATAL_ERROR_UNSUPPORTED: format=native ENVFILE_BOM=%s\n", bom > "/dev/stderr"
+        exit 1
+    }
 
     NUL = sprintf("%c", 0)
     BOM = sprintf("%c%c%c", 0xef, 0xbb, 0xbf)
@@ -64,8 +73,8 @@ function normalize(path,    rc, raw, lines, n, i, line, all_crlf) {
             printf "FILE_ERROR_BOM: %s\n", path > "/dev/stderr"
             errors++; return
         }
-        if (bom == "warn") printf "WARNING_BOM: %s\n", path > "/dev/stderr"
-        lines[1] = substr(lines[1], 4)
+        if (bom == "strip")
+            lines[1] = substr(lines[1], 4)
     }
 
     if (crlf == "strip") {

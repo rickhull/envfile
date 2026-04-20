@@ -1,257 +1,271 @@
 #!/usr/bin/env ruby
 
-module EnvFile
-  ERROR_NO_EQUALS                = "ERROR_NO_EQUALS"
-  ERROR_EMPTY_KEY                = "ERROR_EMPTY_KEY"
-  ERROR_KEY_LEADING_WHITESPACE   = "ERROR_KEY_LEADING_WHITESPACE"
-  ERROR_KEY_TRAILING_WHITESPACE  = "ERROR_KEY_TRAILING_WHITESPACE"
-  ERROR_VALUE_LEADING_WHITESPACE = "ERROR_VALUE_LEADING_WHITESPACE"
-  ERROR_KEY_INVALID              = "ERROR_KEY_INVALID"
-  ERROR_DOUBLE_QUOTE_UNTERMINATED = "ERROR_DOUBLE_QUOTE_UNTERMINATED"
-  ERROR_SINGLE_QUOTE_UNTERMINATED = "ERROR_SINGLE_QUOTE_UNTERMINATED"
-  ERROR_TRAILING_CONTENT         = "ERROR_TRAILING_CONTENT"
-  ERROR_VALUE_INVALID_CHAR       = "ERROR_VALUE_INVALID_CHAR"
+format = ENV.fetch("ENVFILE_FORMAT", "shell")
+action = ENV.fetch("ENVFILE_ACTION", "validate")
+bom = ENV["ENVFILE_BOM"] || (format == "native" ? "literal" : "strip")
+crlf = ENV.fetch("ENVFILE_CRLF", "ignore")
+nul = ENV.fetch("ENVFILE_NUL", "reject")
+cont = ENV.fetch("ENVFILE_BACKSLASH_CONTINUATION", "ignore")
 
-  FORMAT = ENV.fetch("ENVFILE_FORMAT", "shell")
-  ACTION = ENV.fetch("ENVFILE_ACTION", "validate")
+def fatal(code, detail)
+  warn "#{code}: #{detail}"
+  exit 1
+end
 
-  NL    = "\n".b.freeze
-  EQ    = "=".b.freeze
-  HASH  = "#".b.freeze
-  UNDER = "_".b.freeze
+fatal("FATAL_ERROR_BAD_ENVFILE_VALUE", "ENVFILE_BOM=#{bom}") unless %w[literal strip reject].include?(bom)
+fatal("FATAL_ERROR_UNSUPPORTED", "format=native ENVFILE_BOM=#{bom}") if format == "native" && bom != "literal"
 
-  NATIVE_KEY_RE = /\A[A-Z_][A-Z0-9_]*\z/n
+$checked = 0
+$errors = 0
+$env_map = {}
 
-  def self.valid_native_key?(key)
-    return false if key.empty?
-    b = key.getbyte(0)
-    return false unless (65 <= b && b <= 90) || b == 95
-    key.each_byte.all? { |c| (65 <= c && c <= 90) || (48 <= c && c <= 57) || c == 95 }
+def diag(path, line, code)
+  warn "#{code}: #{path}:#{line}"
+  $errors += 1
+end
+
+def fdiag(path, code)
+  warn "#{code}: #{path}"
+  $errors += 1
+end
+
+def split_lines(buf)
+  lines = buf.split("\n", -1)
+  lines.pop if lines.last == ""
+  lines
+end
+
+def continuation?(line)
+  n = 0
+  i = line.bytesize - 1
+  while i >= 0 && line.getbyte(i) == 92
+    n += 1
+    i -= 1
   end
+  (n % 2) == 1
+end
 
-  # Returns [checked, errors] and writes norm/diag as raw bytes.
-  def self.native_scan(buf, tag, norm, diag, normalize:)
-    checked = errors = 0
-    n = 0
-    start = 0
+def valid_shell_key?(k)
+  !!(k =~ /\A[A-Za-z_][A-Za-z0-9_]*\z/)
+end
 
-    buf.each_byte.with_index do |byte, i|
-      next unless byte == 10  # \n
-      n += 1
-      line = buf.byteslice(start, i - start)
-      start = i + 1
-
-      if line.include?("\0")
-        diag << "#{ERROR_VALUE_INVALID_CHAR}: #{tag}:#{n}\n"
-        checked += 1
-        errors += 1
-        next
-      end
-      next if line.nil? || line.strip.empty?
-      next if line.getbyte(0) == 35  # #
-      checked += 1
-
-      eq = line.index(EQ)
-      unless eq
-        diag << "#{ERROR_NO_EQUALS}: #{tag}:#{n}\n"
-        errors += 1
-        next
-      end
-
-      k = line.byteslice(0, eq)
-      v = line.byteslice(eq + 1, line.bytesize - eq - 1)
-
-      if k.empty?
-        diag << "#{ERROR_EMPTY_KEY}: #{tag}:#{n}\n"
-        errors += 1
-        next
-      end
-      unless valid_native_key?(k)
-        diag << "#{ERROR_KEY_INVALID}: #{tag}:#{n}\n"
-        errors += 1
-        next
-      end
-
-      norm << k << EQ << v << NL if normalize
+def unquote_shell_value(path, lineno, v)
+  return v if v.empty?
+  c = v[0]
+  if c == '"' || c == "'"
+    rest = v[1..]
+    pos = rest.index(c)
+    unless pos
+      diag(path, lineno, c == '"' ? "LINE_ERROR_DOUBLE_QUOTE_UNTERMINATED" : "LINE_ERROR_SINGLE_QUOTE_UNTERMINATED")
+      return nil
     end
-
-    # handle final line with no trailing newline
-    if start < buf.bytesize
-      n += 1
-      line = buf.byteslice(start, buf.bytesize - start)
-      if line.include?("\0")
-        diag << "#{ERROR_VALUE_INVALID_CHAR}: #{tag}:#{n}\n"
-        checked += 1
-        errors += 1
-        return [checked, errors]
-      end
-      unless line.nil? || line.strip.empty? || line.getbyte(0) == 35
-        checked += 1
-        eq = line.index(EQ)
-        unless eq
-          diag << "#{ERROR_NO_EQUALS}: #{tag}:#{n}\n"
-          errors += 1
-          return [checked, errors]
-        end
-        k = line.byteslice(0, eq)
-        v = line.byteslice(eq + 1, line.bytesize - eq - 1)
-        if k.empty?
-          diag << "#{ERROR_EMPTY_KEY}: #{tag}:#{n}\n"
-          errors += 1
-        elsif !valid_native_key?(k)
-          diag << "#{ERROR_KEY_INVALID}: #{tag}:#{n}\n"
-          errors += 1
-        else
-          norm << k << EQ << v << NL if normalize
-        end
-      end
+    unless (rest[(pos + 1)..] || "").empty?
+      diag(path, lineno, "LINE_ERROR_TRAILING_CONTENT")
+      return nil
     end
-
-    [checked, errors]
+    return rest[0...pos]
   end
-
-  def self.lint_native(files)
-    normalize = ACTION == "normalize"
-    norm = "".b
-    diag = "".b
-    total_checked = total_errors = 0
-
-    files.each do |f|
-      buf = f == "-" ? $stdin.binmode.read : File.binread(f)
-      checked, errors = native_scan(buf, f, norm, diag, normalize:)
-      total_checked += checked
-      total_errors  += errors
-    end
-
-    diag << "#{total_checked} checked, #{total_errors} errors\n"
-    $stdout.binmode.write(norm) unless norm.empty?
-    $stderr.binmode.write(diag)
-    total_errors
+  if v.match?(/[ \t'"\\]/)
+    diag(path, lineno, "LINE_ERROR_VALUE_INVALID_CHAR")
+    return nil
   end
+  v
+end
 
-  def self.lint_shell(files, out: $stderr)
-    files = ["-"] if files.empty?
-    totals = Hash.new 0
-
-    files.each do |f|
-      r = ShellResult.new(f, out:).lint
-      totals[:checked]  += r.checked
-      totals[:errors]   += r.errors
-    end
-    out.puts format("%i checked, %i errors",
-                    totals[:checked], totals[:errors])
-    totals
-  end
-
-  def self.lint(files, out: $stderr)
-    if FORMAT == "native"
-      lint_native(files)
-    else
-      lint_shell(files, out:)
-    end
-  end
-
-  class ShellResult
-    attr_reader :path, :io, :checked, :errors
-
-    def initialize path, out: $stderr
-      @path = path
-      @io = out
-      @checked = 0
-      @errors = 0
-    end
-
-    def lint
-      each_line do |line, n|
-        if line.include?("\0")
-          error ERROR_VALUE_INVALID_CHAR, n
-          @checked += 1
-          next
-        end
-        next if line.strip.empty?
-        next if line.start_with? "#"
-        @checked += 1
-        shell_line(line, n)
-      end
-      self
-    end
-
-    def each_line
-      n = 0
-      if @path == "-"
-        $stdin.each_line(chomp: true) { |line| yield line.chomp("\r"), (n += 1) }
-      else
-        File.foreach(@path, chomp: true) { |line| yield line.chomp("\r"), (n += 1) }
-      end
-    end
-
-    def shell_line line, n
-      unless line.include? "="
-        error ERROR_NO_EQUALS, n
-        return
-      end
-
-      k, v = line.split("=", 2)
-
-      if k.start_with? /\s/
-        error ERROR_KEY_LEADING_WHITESPACE, n
-        return
-      end
-      if k.end_with?(" ") || k.end_with?("\t")
-        error ERROR_KEY_TRAILING_WHITESPACE, n
-        return
-      end
-      if !v.empty? && (v.start_with?(" ") || v.start_with?("\t"))
-        error ERROR_VALUE_LEADING_WHITESPACE, n
-        return
-      end
-      if k.empty?
-        error ERROR_EMPTY_KEY, n
-        return
-      end
-      unless k.match? /\A[A-Za-z_][A-Za-z0-9_]*\z/
-        error ERROR_KEY_INVALID, n
-        return
-      end
-
-      return if v.empty?
-
-      lead_char = v[0]
-      if lead_char == '"'
-        rest = v[1..]
-        unless (pos = rest&.index('"'))
-          error ERROR_DOUBLE_QUOTE_UNTERMINATED, n
-          return
-        end
-        unless (rest[pos + 1..] || "").empty?
-          error ERROR_TRAILING_CONTENT, n
-          return
-        end
-      elsif lead_char == "'"
-        rest = v[1..]
-        unless (pos = rest&.index("'"))
-          error ERROR_SINGLE_QUOTE_UNTERMINATED, n
-          return
-        end
-        unless (rest[pos + 1..] || "").empty?
-          error ERROR_TRAILING_CONTENT, n
-          return
-        end
-      else
-        if v.match? /[\s'"\\]/
-          error ERROR_VALUE_INVALID_CHAR, n
-          return
-        end
-      end
-    end
-
-    def error msg, n
-      @errors += 1
-      @io.puts "#{msg}: #{@path}:#{n}"
-    end
-
+def seed_env_map
+  ENV.each do |k, v|
+    next if k.start_with?("ENVFILE_")
+    $env_map[k] = v
   end
 end
 
-result = EnvFile.lint(ARGV.empty? ? ["-"] : ARGV)
-exit 1 if (result.is_a?(Integer) ? result : result[:errors]) > 0
+def subst_value(path, lineno, value)
+  out = +""
+  i = 0
+  while i < value.bytesize
+    pos = value.index("$", i)
+    unless pos
+      out << value[i..]
+      break
+    end
+    out << value[i...pos]
+    if pos + 1 >= value.bytesize
+      out << "$"
+      break
+    end
+    rest = value[(pos + 1)..]
+    name = nil
+    if rest.start_with?("{")
+      close = rest.index("}", 1)
+      unless close
+        out << "$" << rest
+        break
+      end
+      name = rest[1...close]
+      i = pos + 1 + close + 1
+    else
+      m = rest.match(/\A([A-Za-z_][A-Za-z0-9_]*)/)
+      unless m
+        out << "$"
+        i = pos + 1
+        next
+      end
+      name = m[1]
+      i = pos + 1 + name.bytesize
+    end
+
+    if $env_map.key?(name)
+      out << $env_map[name]
+    else
+      warn "LINE_ERROR_UNBOUND_REF (#{name}): #{path}:#{lineno}"
+      $errors += 1
+    end
+  end
+  out
+end
+
+def handle_record(path, lineno, key, raw_value, value, format, action)
+  if action == "dump"
+    puts "#{key}=#{value}"
+    return
+  end
+  return if action == "validate" || action == "normalize"
+
+  resolved = value
+  if format == "native" || !raw_value.start_with?("'")
+    resolved = subst_value(path, lineno, resolved)
+  end
+  $env_map[key] = resolved
+  puts "#{key}=#{resolved}" if action == "delta"
+end
+
+def process_file(path, data, format, action, bom, crlf, nul, cont)
+  if nul == "reject" && data.include?("\0")
+    fdiag(path, "FILE_ERROR_NUL")
+    return
+  end
+
+  lines = split_lines(data)
+  if !lines.empty? && lines[0].start_with?("\xEF\xBB\xBF".b)
+    if bom == "reject"
+      fdiag(path, "FILE_ERROR_BOM")
+      return
+    elsif bom == "strip"
+      lines[0] = lines[0].byteslice(3, lines[0].bytesize - 3) || "".b
+    end
+  end
+
+  if crlf == "strip"
+    all_crlf = !lines.empty? && lines.all? { |l| l.end_with?("\r") }
+    lines.map! { |l| l.byteslice(0, l.bytesize - 1) || "".b } if all_crlf
+  end
+
+  proc_lines = []
+  proc_lineno = []
+  if cont == "accept"
+    i = 0
+    while i < lines.length
+      line = lines[i]
+      lineno = i + 1
+      i += 1
+      while continuation?(line) && i < lines.length
+        line = line[0...-1] + lines[i]
+        lineno = i + 1
+        i += 1
+      end
+      proc_lines << line
+      proc_lineno << lineno
+    end
+  else
+    lines.each_with_index do |line, i|
+      proc_lines << line
+      proc_lineno << i + 1
+    end
+  end
+
+  proc_lines.each_with_index do |line, idx|
+    lineno = proc_lineno[idx]
+    trimmed = line.end_with?("\r") ? line[0...-1] : line
+    next if trimmed.strip.empty?
+    next if trimmed.start_with?("#")
+
+    $checked += 1
+    eq = line.index("=")
+    unless eq
+      diag(path, lineno, "LINE_ERROR_NO_EQUALS")
+      next
+    end
+    raw_key = line[0...eq]
+    raw_value = line[(eq + 1)..] || ""
+
+    if action == "normalize"
+      puts "#{raw_key}=#{raw_value}"
+      next
+    end
+
+    work = format == "native" ? line : trimmed
+    eq2 = work.index("=")
+    unless eq2
+      diag(path, lineno, "LINE_ERROR_NO_EQUALS")
+      next
+    end
+    key = work[0...eq2]
+    value = work[(eq2 + 1)..] || ""
+
+    if format == "native"
+      if key.empty?
+        diag(path, lineno, "LINE_ERROR_EMPTY_KEY")
+        next
+      end
+      handle_record(path, lineno, key, raw_value, value, format, action)
+      next
+    end
+
+    if !key.empty? && [" ", "\t"].include?(key[0])
+      diag(path, lineno, "LINE_ERROR_KEY_LEADING_WHITESPACE")
+      next
+    end
+    if !key.empty? && [" ", "\t"].include?(key[-1])
+      diag(path, lineno, "LINE_ERROR_KEY_TRAILING_WHITESPACE")
+      next
+    end
+    if !value.empty? && [" ", "\t"].include?(value[0])
+      diag(path, lineno, "LINE_ERROR_VALUE_LEADING_WHITESPACE")
+      next
+    end
+    if key.empty?
+      diag(path, lineno, "LINE_ERROR_EMPTY_KEY")
+      next
+    end
+    unless valid_shell_key?(key)
+      diag(path, lineno, "LINE_ERROR_KEY_INVALID")
+      next
+    end
+
+    out_value = unquote_shell_value(path, lineno, value)
+    next if out_value.nil?
+    handle_record(path, lineno, key, raw_value, out_value, format, action)
+  end
+end
+
+files = ARGV.empty? ? ["-"] : ARGV
+seed_env_map if action == "delta" || action == "apply"
+
+files.each do |path|
+  begin
+    data = path == "-" ? $stdin.read : File.binread(path)
+  rescue StandardError
+    fdiag(path, "FILE_ERROR_FILE_UNREADABLE")
+    next
+  end
+  process_file(path, data, format, action, bom, crlf, nul, cont)
+end
+
+if action == "apply"
+  $env_map.keys.reject { |k| k.start_with?("ENVFILE_") }.sort.each do |k|
+    puts "#{k}=#{$env_map[k]}"
+  end
+end
+
+warn "#{$checked} checked, #{$errors} errors"
+exit($errors > 0 ? 1 : 0)

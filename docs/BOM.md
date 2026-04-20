@@ -12,7 +12,7 @@ References:
 - [src/c/envfile.c](/home/rwh/git/envfile/src/c/envfile.c)
 - [docs/PIPELINE.md](/home/rwh/git/envfile/docs/PIPELINE.md)
 - [shell/normalize/bom.env](/home/rwh/git/envfile/shell/normalize/bom.env)
-- [shell/normalize/bom.BOM=warn.err](/home/rwh/git/envfile/shell/normalize/bom.BOM=warn.err)
+- [shell/normalize/bom.BOM=literal.err](/home/rwh/git/envfile/shell/normalize/bom.BOM=literal.err)
 - [shell/normalize/bom.BOM=reject.err](/home/rwh/git/envfile/shell/normalize/bom.BOM=reject.err)
 
 ## What We Mean By BOM
@@ -30,7 +30,7 @@ parsed content.
 
 For the reference path:
 
-- `ENVFILE_BOM=warn` strips the BOM and emits `WARNING_BOM`
+- `ENVFILE_BOM=literal` leaves a BOM at byte 0 unchanged
 - `ENVFILE_BOM=strip` strips the BOM silently
 - `ENVFILE_BOM=reject` treats a leading BOM as a file-fatal prepass failure
 
@@ -38,24 +38,15 @@ That behavior applies to `shell` and `compat`.
 
 For `native`:
 
-- BOM handling is unsupported at dispatch time
+- only `ENVFILE_BOM=literal` is supported at dispatch time
 - the file is treated literally
 - the native parser does not do BOM preprocessing
 
-## Warn Layer
+## Warning Model
 
-A BOM in the BOM position is a warn-layer concern, not a line-syntax error.
-
-That means:
-
-- BOM at byte 0 can be reported as a warning
-- if policy says so, it can be stripped or rejected before record parsing
-- if it is left in place, it remains a BOM-position issue, not a malformed
-  `KEY=VALUE` line
-
-This is the current `WARNING_BOM` case. It is useful to keep that separate from
-record-level diagnostics so we do not confuse file-prefix policy with line
-syntax.
+BOM handling is currently warning-free. The mode controls only normalize-stage
+behavior (`literal`, `strip`, `reject`). Any future warning-stage policy should
+be added separately from BOM mode selection.
 
 ## Why This Matters
 

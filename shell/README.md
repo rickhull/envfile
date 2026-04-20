@@ -351,8 +351,7 @@ CODE: filename:lineno
 ```
 
 The committed fixture/reference outputs use `LINE_ERROR_*` codes for line
-diagnostics, plus `FILE_ERROR_*` for file-fatal prepasses and `WARNING_BOM`
-for the current warning case.
+diagnostics and `FILE_ERROR_*` for file-fatal prepasses.
 
 The final summary line is always printed:
 
