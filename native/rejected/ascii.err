@@ -1,0 +1,3 @@
+LINE_ERROR_NO_EQUALS: native/rejected/ascii.env:3
+LINE_ERROR_EMPTY_KEY: native/rejected/ascii.env:4
+2 checked, 2 errors

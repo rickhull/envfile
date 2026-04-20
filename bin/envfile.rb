@@ -12,7 +12,7 @@ module EnvFile
   ERROR_TRAILING_CONTENT         = "ERROR_TRAILING_CONTENT"
   ERROR_VALUE_INVALID_CHAR       = "ERROR_VALUE_INVALID_CHAR"
 
-  FORMAT = ENV.fetch("ENVFILE_FORMAT", "strict")
+  FORMAT = ENV.fetch("ENVFILE_FORMAT", "shell")
   ACTION = ENV.fetch("ENVFILE_ACTION", "validate")
 
   NL    = "\n".b.freeze
@@ -129,12 +129,12 @@ module EnvFile
     total_errors
   end
 
-  def self.lint_strict(files, out: $stderr)
+  def self.lint_shell(files, out: $stderr)
     files = ["-"] if files.empty?
     totals = Hash.new 0
 
     files.each do |f|
-      r = StrictResult.new(f, out:).lint
+      r = ShellResult.new(f, out:).lint
       totals[:checked]  += r.checked
       totals[:errors]   += r.errors
     end
@@ -147,11 +147,11 @@ module EnvFile
     if FORMAT == "native"
       lint_native(files)
     else
-      lint_strict(files, out:)
+      lint_shell(files, out:)
     end
   end
 
-  class StrictResult
+  class ShellResult
     attr_reader :path, :io, :checked, :errors
 
     def initialize path, out: $stderr
@@ -171,7 +171,7 @@ module EnvFile
         next if line.strip.empty?
         next if line.start_with? "#"
         @checked += 1
-        strict_line(line, n)
+        shell_line(line, n)
       end
       self
     end
@@ -185,7 +185,7 @@ module EnvFile
       end
     end
 
-    def strict_line line, n
+    def shell_line line, n
       unless line.include? "="
         error ERROR_NO_EQUALS, n
         return
@@ -203,6 +203,10 @@ module EnvFile
       end
       if !v.empty? && (v.start_with?(" ") || v.start_with?("\t"))
         error ERROR_VALUE_LEADING_WHITESPACE, n
+        return
+      end
+      if k.empty?
+        error ERROR_EMPTY_KEY, n
         return
       end
       unless k.match? /\A[A-Za-z_][A-Za-z0-9_]*\z/

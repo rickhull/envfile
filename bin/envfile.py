@@ -19,7 +19,7 @@ ERROR_SINGLE_QUOTE_UNTERMINATED = "ERROR_SINGLE_QUOTE_UNTERMINATED"
 ERROR_TRAILING_CONTENT = "ERROR_TRAILING_CONTENT"
 ERROR_VALUE_INVALID_CHAR = "ERROR_VALUE_INVALID_CHAR"
 
-FORMAT = os.environ.get("ENVFILE_FORMAT", "strict")
+FORMAT = os.environ.get("ENVFILE_FORMAT", "shell")
 ACTION = os.environ.get("ENVFILE_ACTION", "validate")
 
 EQ = ord('=')
@@ -100,13 +100,15 @@ def _open_file(path):
     return open(path, "r")
 
 
-def _strict_line(f, n, k, v, error, out, normalize):
+def _shell_line(f, n, k, v, error, out, normalize):
     if k != k.lstrip():
         error(n, ERROR_KEY_LEADING_WHITESPACE); return
     if k != k.rstrip():
         error(n, ERROR_KEY_TRAILING_WHITESPACE); return
     if v and v != v.lstrip():
         error(n, ERROR_VALUE_LEADING_WHITESPACE); return
+    if not k:
+        error(n, ERROR_EMPTY_KEY); return
     if not KEY_RE.match(k):
         error(n, ERROR_KEY_INVALID); return
 
@@ -175,7 +177,7 @@ def _lint_file(f, out, normalize):
                 error(n, ERROR_NO_EQUALS)
                 continue
             k, v = line.split("=", 1)
-            _strict_line(f, n, k, v, error, out, normalize)
+            _shell_line(f, n, k, v, error, out, normalize)
 
     return checked, errors
 

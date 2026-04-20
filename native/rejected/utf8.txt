@@ -1,6 +1,0 @@
-ERROR_KEY_INVALID: native/rejected/utf8.env:3
-ERROR_NO_EQUALS: native/rejected/utf8.env:4
-ERROR_EMPTY_KEY: native/rejected/utf8.env:5
-ERROR_KEY_INVALID: native/rejected/utf8.env:6
-ERROR_KEY_INVALID: native/rejected/utf8.env:7
-5 checked, 5 errors

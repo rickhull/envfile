@@ -1,0 +1,3 @@
+LINE_ERROR_KEY_INVALID: shell/mixed/combined.env:5
+LINE_ERROR_NO_EQUALS: shell/mixed/combined.env:8
+6 checked, 2 errors

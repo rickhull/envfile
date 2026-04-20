@@ -26,9 +26,9 @@ teardown:
 run *args:
   chrt -f 99 taskset -c 0 nice -n -20 bin/bench {{args}} || bin/bench {{args}}
 
-# Run strict-format benchmarks.
-strict *args:
-  chrt -f 99 taskset -c 0 nice -n -20 bin/bench format=strict {{args}} || bin/bench format=strict {{args}}
+# Run shell-format benchmarks.
+shell *args:
+  chrt -f 99 taskset -c 0 nice -n -20 bin/bench format=shell {{args}} || bin/bench format=shell {{args}}
 
 # Run native-format benchmarks.
 native *args:
@@ -38,9 +38,9 @@ native *args:
 corpus *args:
   chrt -f 99 taskset -c 0 nice -n -20 bin/bench files=corpus {{args}} || bin/bench files=corpus {{args}}
 
-# Run strict-format benchmarks over the shared corpus.
-strict_corpus *args:
-  chrt -f 99 taskset -c 0 nice -n -20 bin/bench format=strict files=corpus {{args}} || bin/bench format=strict files=corpus {{args}}
+# Run shell-format benchmarks over the shared corpus.
+shell_corpus *args:
+  chrt -f 99 taskset -c 0 nice -n -20 bin/bench format=shell files=corpus {{args}} || bin/bench format=shell files=corpus {{args}}
 
 # Run native-format benchmarks over the shared corpus.
 native_corpus *args:

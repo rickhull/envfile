@@ -1,7 +1,7 @@
 #!/usr/bin/env -S deno run --allow-read --allow-env
 import { lint } from "../src/js/envfile.js";
 
-const format = Deno.env.get("ENVFILE_FORMAT") || "strict";
+const format = Deno.env.get("ENVFILE_FORMAT") || "shell";
 const action = Deno.env.get("ENVFILE_ACTION") || "validate";
 
 const files = Deno.args;

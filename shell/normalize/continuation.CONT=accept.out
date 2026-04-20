@@ -1,0 +1,5 @@
+SIMPLE=foo
+CONTINUED=hello world
+DOUBLE_CONTINUED=one two three
+ESCAPED_BACKSLASH=no\\
+NEXT_AFTER_ESCAPED=standalone

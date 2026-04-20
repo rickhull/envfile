@@ -1,0 +1,6 @@
+FOO=bar
+PORT=8080
+MYBIN=/home/user/bin
+MYPATH=/home/user/bin:/usr/local/bin:/usr/bin:/bin
+FULL=/home/user/bin/tool
+MISSING=

@@ -1,0 +1,6 @@
+A=alpha
+B=2
+BIN=/home/user/bin
+CHAIN=alpha:/home/user/bin
+HOME=/home/user
+PATH=/home/user/bin:/usr/local/bin:/usr/bin:/bin

@@ -1,6 +1,6 @@
 set shell := ["bash", "-cu"]
 
-# Report that compat is still a placeholder.
+# Report compat direction and status.
 status:
-  @printf 'compat: coming soon\n'
+  @printf 'compat: targeting systemd EnvironmentFile compatibility\n'
   @printf 'see compat/README.md\n'

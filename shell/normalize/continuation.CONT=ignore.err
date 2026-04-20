@@ -1,0 +1,4 @@
+LINE_ERROR_NO_EQUALS: shell/normalize/continuation.env:5
+LINE_ERROR_NO_EQUALS: shell/normalize/continuation.env:7
+LINE_ERROR_NO_EQUALS: shell/normalize/continuation.env:8
+8 checked, 3 errors

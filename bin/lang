@@ -2,15 +2,40 @@
 # Query tool facts for a language entry in languages.env.
 # Usage:
 #   bin/lang status          -- show all languages and tool availability
-#   bin/lang <lang> [<field>]  -- show fields for one language
+#   bin/lang <lang> [<field>]  -- show fields for one language; `envfile` resolves the repo executable
 
 set -e
 
 LANGS_ENV="${LANGS_ENV:-$(dirname "$0")/../languages.env}"
+REPO_DIR="$(CDPATH= cd "$(dirname "$0")/.." && pwd)"
 
 if [ $# -lt 1 ] || [ $# -gt 2 ]; then
-  printf 'usage: bin/lang status\n       bin/lang <lang> [<field>]\n' >&2
+  printf 'usage: bin/lang list [built|scripted]\n       bin/lang status\n       bin/lang <lang> [<field>]\n' >&2
   exit 1
+fi
+
+# list: emit language names, optionally filtered by execution type
+if [ "$1" = "list" ]; then
+  filter="${2:-}"
+  awk -F= -v filter="$filter" '
+    /^[[:space:]]*$/ { next }
+    {
+      n = index($1, ".")
+      if (n == 0) next
+      lang = substr($1, 1, n - 1)
+      val  = substr($0, index($0, "=") + 1)
+      seen[lang] = 1
+      field = substr($1, n + 1)
+      if (filter == "" || val == filter) hit[lang] = 1
+      if (filter == "mise" && field == "mise") hit[lang] = 1
+    }
+    END {
+      for (lang in seen)
+        if (filter == "" || hit[lang])
+          print lang
+    }
+  ' "$LANGS_ENV" | sort
+  exit 0
 fi
 
 # status: show all languages
@@ -56,8 +81,21 @@ if [ "$1" = "status" ]; then
   exit 0
 fi
 
+# Resolve extension aliases (e.g. rs → rust, pl → perl, py → python)
 lang="$1"
 field="${2:-}"
+resolved=$(awk -F= -v ext="$lang" '
+  /^[[:space:]]*$/ { next }
+  {
+    n = index($1, ".")
+    if (n == 0) next
+    l = substr($1, 1, n - 1)
+    f = substr($1, n + 1)
+    v = substr($0, index($0, "=") + 1)
+    if (f == "extension" && v == ext) { print l; exit }
+  }
+' "$LANGS_ENV")
+[ -n "$resolved" ] && lang="$resolved"
 
 eval "$(awk -F= -v lang="$lang" '
   /^[[:space:]]*$/ { next }
@@ -92,6 +130,15 @@ case "$field" in
     else
       [ -n "$path" ] && printf '%s\n' "$path" || exit 1
     fi
+    ;;
+  envfile)
+    suffix="${lang_extension:-$lang}"
+    case $lang in
+      *.*) suffix=$lang ;;
+    esac
+    path="$REPO_DIR/bin/envfile.$suffix"
+    [ -x "$path" ] || exit 1
+    printf '%s\n' "$path"
     ;;
   *)
     var="lang_${field}"

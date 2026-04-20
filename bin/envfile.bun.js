@@ -2,7 +2,7 @@
 import { lint } from "../src/js/envfile.js";
 import { readFileSync } from "fs";
 
-const format = process.env.ENVFILE_FORMAT || "strict";
+const format = process.env.ENVFILE_FORMAT || "shell";
 const action = process.env.ENVFILE_ACTION || "validate";
 
 const files = Bun.argv.slice(2);

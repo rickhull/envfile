@@ -35,63 +35,47 @@ implementations will be skipped if `nasm` is absent.
 
 ## bin/lang
 
-`bin/lang` is a POSIX sh script that bridges `languages.env` with the
-runtime environment. It has two modes.
+`bin/lang` is a POSIX sh script that reads `languages.env` and reports
+language metadata and resolved implementation paths.
 
 ### Query mode
 
 ```
-bin/lang <lang> <field>
+bin/lang <lang> [<field>]
 ```
 
-Prints one field value for a language entry. Raw fields come directly from
-`languages.env` (`execution`, `build`, `exec`, `mise`, `check_args`). Two
+Prints one field value for a language entry. With no field, it prints every
+field for the language. Raw fields come directly from `languages.env`
+(`execution`, `build`, `exec`, `availability`, `mise`, `extension`). Two
 resolved fields are also available:
 
 | field       | value                                    |
 |-------------|------------------------------------------|
-| `available` | `yes` or `no` (probed at call time)      |
-| `invoke`    | full resolved command, e.g. `go` or `mise exec -- zig` |
+| `which`     | resolved executable path on `PATH`       |
+| `envfile`   | repo-local implementation path           |
 
 Examples:
 
 ```sh
-bin/lang go invoke        # → go
-bin/lang zig available    # → yes
+bin/lang go which         # → /usr/bin/go
+bin/lang zig envfile      # → bin/envfile.zig
 bin/lang bun mise         # → available
 ```
 
-### Exec mode
-
-```
-bin/lang <lang> -- <args...>
-```
-
-Resolves the tool and execs it directly, passing `<args...>` unchanged. Used
-by the Makefile and `impl.just` so build rules and activation checks do not
-hard-code `mise exec --`.
-
-Examples:
-
-```sh
-bin/lang go   -- version
-bin/lang rust -- --version
-bin/lang zig  -- build-exe src/zig/main.zig ...
-```
+`bin/lang` does not shell out through `mise exec`. The `mise` metadata is
+used for availability reporting and documentation, while actual resolution is
+driven by the executable currently on `PATH`.
 
 ### Resolution logic
 
-For a language with `mise=available` in `languages.env`:
+For a language entry in `languages.env`:
 
 1. `command -v <tool>` — PATH check only, no fork
-2. If that fails, try: `mise exec -- <tool> <check_args>`
-3. If both fail: unavailable
+2. If that fails: unavailable
 
-For languages without a `mise` field (`cc`, `nasm`, `awk`, `bash`, etc.):
-naked invoke only, no fallback.
+For languages without a `mise` field (`cc`, `nasm`, `awk`, `bash`, etc.),
+the same PATH-only resolution applies.
 
-This means contributors with mise get pinned versions; contributors without
-it fall through to whatever is on their PATH. The worst-case probe (both
-checks fail) takes ~30ms, which is acceptable given that it only occurs for
-unavailable tools.
-
+This means contributors with mise can opt into pinned versions via the
+surrounding toolchain, but `bin/lang` itself stays PATH-based. The worst-case
+probe (tool missing) is just the `command -v` failure path and is cheap.

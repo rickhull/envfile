@@ -1,9 +1,11 @@
-# binaries built via: just build all
+# binaries built by make; symlink originals committed instead
 bin/*.asm
 bin/*.c
 bin/*.rs
 bin/*.zig
 bin/*.go
+bin/bench
+bin/nullscan
 
 # temporary corpus generation files
 corpus/*.txt
@@ -12,3 +14,9 @@ corpus/*.txt
 .make/
 *.debug
 __pycache__
+
+# nonpublic
+.envrc.mine
+
+# thanks
+.codex

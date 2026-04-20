@@ -1,0 +1,5 @@
+GOOD_KEY=value
+ANOTHER_KEY=123
+EMPTY=
+lowercase=lowercase_example
+QUOTED="hello world"

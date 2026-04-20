@@ -1,0 +1,3 @@
+FOO=bar
+VALUE_WITH_CR=helloworld
+PORT=8080

@@ -91,7 +91,7 @@ just corpus::clean-state
 
 ## 2. Filter
 
-`filter` reads `explored.txt`, runs the current strict acceptance validator,
+`filter` reads `explored.txt`, runs the current shell acceptance validator,
 and writes accepted
 paths to `filtered.txt`.
 

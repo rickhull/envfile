@@ -2,7 +2,7 @@
 # envfile.bash — validate/normalize env files (see README.md)
 set -uo pipefail
 
-format=${ENVFILE_FORMAT:-strict}
+format=${ENVFILE_FORMAT:-shell}
 action=${ENVFILE_ACTION:-validate}
 checked=0 errors=0
 
@@ -27,7 +27,7 @@ native_line() {
   [[ $action == normalize ]] && printf '%s=%s\n' "$k" "$v"
 }
 
-strict_line() {
+shell_line() {
   local file=$1 n=$2 line=$3 k v value c rest after
   case $line in *=*) ;; *)
     diag "$file" "$n" ERROR_NO_EQUALS; return ;;
@@ -37,6 +37,7 @@ strict_line() {
   [[ $k == [[:space:]]* ]]          && { diag "$file" "$n" ERROR_KEY_LEADING_WHITESPACE;   return; }
   [[ $k == *[[:space:]] ]]          && { diag "$file" "$n" ERROR_KEY_TRAILING_WHITESPACE;  return; }
   [[ $v == [[:space:]]* ]]          && { diag "$file" "$n" ERROR_VALUE_LEADING_WHITESPACE; return; }
+  [[ -z $k ]]                         && { diag "$file" "$n" ERROR_EMPTY_KEY;   return; }
   [[ $k =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || { diag "$file" "$n" ERROR_KEY_INVALID; return; }
 
   if [[ -n $v ]]; then
@@ -72,7 +73,7 @@ process() {
     if [[ $format == native ]]; then
       native_line "$file" "$n" "$line"
     else
-      strict_line "$file" "$n" "${line%$'\r'}"
+      shell_line "$file" "$n" "${line%$'\r'}"
     fi
   done
 }

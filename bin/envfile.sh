@@ -1,7 +1,7 @@
 #!/bin/sh
 # envfile.sh — validate/normalize env files (POSIX sh; see README.md)
 
-format=${ENVFILE_FORMAT:-strict}
+format=${ENVFILE_FORMAT:-shell}
 action=${ENVFILE_ACTION:-validate}
 checked=0 errors=0
 TAB="$(printf '\t')" CR="$(printf '\r')"
@@ -13,7 +13,7 @@ has_nul() {
   "$nullscan" "$1" >/dev/null 2>&1
 }
 
-valid_strict_key() {
+valid_shell_key() {
   case "$1" in
     [A-Za-z_]*) case "${1#?}" in *[!A-Za-z0-9_]*) return 1 ;; esac; return 0 ;;
   esac; return 1
@@ -34,7 +34,7 @@ native_line() {
   [ "$action" = normalize ]    && printf '%s=%s\n' "$k" "$v"
 }
 
-strict_line() {
+shell_line() {
   file=$1; n=$2; line=$3
   case "$line" in *=*) ;; *) diag "$file" "$n" ERROR_NO_EQUALS; return ;; esac
   k=${line%%=*}; v=${line#*=}; value=$v
@@ -42,7 +42,8 @@ strict_line() {
   case "$k" in [[:space:]]*) diag "$file" "$n" ERROR_KEY_LEADING_WHITESPACE;   return ;; esac
   case "$k" in *[[:space:]]) diag "$file" "$n" ERROR_KEY_TRAILING_WHITESPACE;  return ;; esac
   case "$v" in [[:space:]]*) diag "$file" "$n" ERROR_VALUE_LEADING_WHITESPACE; return ;; esac
-  valid_strict_key "$k"        || { diag "$file" "$n" ERROR_KEY_INVALID; return; }
+  [ -z "$k" ]                 && { diag "$file" "$n" ERROR_EMPTY_KEY;   return; }
+  valid_shell_key "$k"        || { diag "$file" "$n" ERROR_KEY_INVALID; return; }
 
   if [ -n "$v" ]; then
     c=${v%"${v#?}"}
@@ -84,7 +85,7 @@ process() {
     if [ "$format" = native ]; then
       native_line "$display" "$n" "$line"
     else
-      strict_line "$display" "$n" "$line"
+      shell_line "$display" "$n" "$line"
     fi
   done < "$input"
 }

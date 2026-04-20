@@ -112,7 +112,7 @@ func (s *state) nativeLine(n int, line string) {
 	}
 }
 
-func (s *state) strictLine(n int, line string) {
+func (s *state) shellLine(n int, line string) {
 	eq := strings.IndexByte(line, '=')
 	if eq == -1 {
 		s.diag_(errorNoEquals, s.path, n)
@@ -130,6 +130,10 @@ func (s *state) strictLine(n int, line string) {
 	}
 	if len(v) > 0 && (v[0] == ' ' || v[0] == '\t') {
 		s.diag_(errorValueLeadingWhitespace, s.path, n)
+		return
+	}
+	if len(k) == 0 {
+		s.diag_(errorEmptyKey, s.path, n)
 		return
 	}
 	if !validStrictKey(k) {
@@ -204,7 +208,7 @@ func lintStrict(path string, f *os.File, st *state) {
 			continue
 		}
 		st.checked++
-		st.strictLine(n, line)
+		st.shellLine(n, line)
 	}
 }
 
@@ -218,7 +222,7 @@ func openFile(path string) (*os.File, error) {
 func main() {
 	format := os.Getenv("ENVFILE_FORMAT")
 	if format == "" {
-		format = "strict"
+		format = "shell"
 	}
 	action := os.Getenv("ENVFILE_ACTION")
 	if action == "" {

@@ -18,8 +18,8 @@ const ERROR_VALUE_INVALID_CHAR        = "ERROR_VALUE_INVALID_CHAR";
 
 fn isNativeKeyStart(c: u8) bool { return (c >= 'A' and c <= 'Z') or c == '_'; }
 fn isNativeKeyRest(c: u8)  bool { return (c >= 'A' and c <= 'Z') or (c >= '0' and c <= '9') or c == '_'; }
-fn isStrictKeyStart(c: u8) bool { return std.ascii.isAlphabetic(c) or c == '_'; }
-fn isStrictKeyRest(c: u8)  bool { return std.ascii.isAlphanumeric(c) or c == '_'; }
+fn isShellKeyStart(c: u8) bool { return std.ascii.isAlphabetic(c) or c == '_'; }
+fn isShellKeyRest(c: u8)  bool { return std.ascii.isAlphanumeric(c) or c == '_'; }
 fn isBadValChar(c: u8)     bool { return std.ascii.isWhitespace(c) or c == '\'' or c == '"' or c == '\\'; }
 
 fn buildByteTable(comptime pred: fn (u8) bool) [256]bool {
@@ -33,8 +33,8 @@ fn buildByteTable(comptime pred: fn (u8) bool) [256]bool {
 
 const native_key_start = buildByteTable(isNativeKeyStart);
 const native_key_rest  = buildByteTable(isNativeKeyRest);
-const strict_key_start = buildByteTable(isStrictKeyStart);
-const strict_key_rest  = buildByteTable(isStrictKeyRest);
+const shell_key_start = buildByteTable(isShellKeyStart);
+const shell_key_rest  = buildByteTable(isShellKeyRest);
 const bad_val_table    = buildByteTable(isBadValChar);
 
 fn validKey(
@@ -51,8 +51,8 @@ fn validNativeKey(k: []const u8) bool {
     return validKey(&native_key_start, &native_key_rest, k);
 }
 
-fn validStrictKey(k: []const u8) bool {
-    return validKey(&strict_key_start, &strict_key_rest, k);
+fn validShellKey(k: []const u8) bool {
+    return validKey(&shell_key_start, &shell_key_rest, k);
 }
 
 fn hasBadValueByte(v: []const u8) bool {
@@ -130,7 +130,7 @@ fn nativeScan(
     }
 }
 
-// --- strict core: line-oriented ---
+// --- shell core: line-oriented ---
 
 const LineResult = struct {
     diag:  ?[]const u8 = null,
@@ -138,7 +138,7 @@ const LineResult = struct {
     val:   []const u8  = "",
 };
 
-fn strictLine(line: []const u8) LineResult {
+fn shellLine(line: []const u8) LineResult {
     if (std.mem.indexOfScalar(u8, line, 0) != null) {
         return .{ .diag = ERROR_VALUE_INVALID_CHAR, .fatal = true };
     }
@@ -150,7 +150,8 @@ fn strictLine(line: []const u8) LineResult {
     if (k.len > 0 and std.ascii.isWhitespace(k[0]))       return .{ .diag = ERROR_KEY_LEADING_WHITESPACE,   .fatal = true };
     if (k.len > 0 and std.ascii.isWhitespace(k[k.len-1])) return .{ .diag = ERROR_KEY_TRAILING_WHITESPACE,  .fatal = true };
     if (v.len > 0 and std.ascii.isWhitespace(v[0]))        return .{ .diag = ERROR_VALUE_LEADING_WHITESPACE, .fatal = true };
-    if (!validStrictKey(k))                                 return .{ .diag = ERROR_KEY_INVALID,              .fatal = true };
+    if (k.len == 0)                                        return .{ .diag = ERROR_EMPTY_KEY,               .fatal = true };
+    if (!validShellKey(k))                                 return .{ .diag = ERROR_KEY_INVALID,              .fatal = true };
 
     const val = val: {
         if (v.len == 0) break :val v;
@@ -240,7 +241,7 @@ fn lintNative(
     }
 }
 
-fn lintStrict(
+fn lintShell(
     path:      []const u8,
     io:        Io,
     norm:      *Io.Writer,
@@ -268,7 +269,7 @@ fn lintStrict(
 
         const eq = std.mem.indexOfScalar(u8, line, '=') orelse 0;
         const k  = line[0..eq];
-        const sr = strictLine(line);
+        const sr = shellLine(line);
         if (sr.diag) |code| {
             diag.print("{s}: {s}:{d}\n", .{ code, path, n }) catch {};
             if (sr.fatal) { counts.errors += 1; continue; }
@@ -283,7 +284,7 @@ pub fn main(init: std.process.Init) !void {
     const io    = init.io;
     const arena = init.arena.allocator();
 
-    const format    = init.environ_map.get("ENVFILE_FORMAT") orelse "strict";
+    const format    = init.environ_map.get("ENVFILE_FORMAT") orelse "shell";
     const action    = init.environ_map.get("ENVFILE_ACTION") orelse "validate";
     const native    = std.mem.eql(u8, format, "native");
     const normalize = std.mem.eql(u8, action, "normalize");
@@ -303,7 +304,7 @@ pub fn main(init: std.process.Init) !void {
     for (files) |path| {
         var c = Counts{};
         if (native) try lintNative(path, io, norm, diag, normalize, &c)
-        else        try lintStrict(path, io,      norm, diag, normalize, &c);
+        else        try lintShell(path, io,      norm, diag, normalize, &c);
         total.checked  += c.checked;
         total.errors   += c.errors;
     }

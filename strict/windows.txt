@@ -1,2 +1,0 @@
-ERROR_NO_EQUALS: strict/windows.env:7
-6 checked, 1 errors

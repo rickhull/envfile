@@ -1,7 +1,7 @@
 ; backend.asm - optional asm parser backend for envfile
 ;
 ; Exports:
-;   envfile_parse_strict(line, len, out)  → status
+;   envfile_parse_shell(line, len, out)  → status
 ;   envfile_parse_native(line, len, out)  → status
 ;
 ; SysV AMD64:
@@ -44,12 +44,6 @@ ENVFILE_ERR_TRAILING_CONTENT           equ 19
     cmp  al, ' '
     je   %1
     cmp  al, 9
-    je   %1
-    cmp  al, 13
-    je   %1
-    cmp  al, 11
-    je   %1
-    cmp  al, 12
     je   %1
 %endmacro
 
@@ -96,10 +90,10 @@ ENVFILE_ERR_TRAILING_CONTENT           equ 19
 
 section .text
 
-global envfile_parse_strict
+global envfile_parse_shell
 global envfile_parse_native
 
-envfile_parse_strict:
+envfile_parse_shell:
     push rbx
     push r12
     push r13
@@ -148,9 +142,11 @@ envfile_parse_strict:
     sub  r13, rbx
     dec  r13                    ; value len
     lea  r12, [rdx + 1]         ; value ptr
+    mov  r9,  r12               ; raw value ptr
+    mov  r10, r13               ; raw value len
 
     test rbx, rbx
-    jz   .check_key_trail
+    jz   .empty_key
     movzx eax, byte [rdi]
     JIF_SPACE .key_lead_ws
     jmp  .check_key_trail
@@ -202,6 +198,10 @@ envfile_parse_strict:
     dec  rcx
     jmp  .key_rest_loop
 
+.empty_key:
+    mov  eax, ENVFILE_ERR_EMPTY_KEY
+    jmp  .ret
+
 .key_invalid:
     mov  eax, ENVFILE_ERR_KEY_INVALID
     jmp  .ret
@@ -238,7 +238,7 @@ envfile_parse_strict:
     jmp  .ret
 
 .quoted:
-    movzx ebx, al
+    movzx r11d, al
     mov  rcx, r13
     dec  rcx
     mov  rdx, r12
@@ -246,13 +246,13 @@ envfile_parse_strict:
 .find_close:
     test rcx, rcx
     jz   .unterm
-    cmp  [rdx], bl
+    cmp  [rdx], r11b
     je   .found_close
     inc  rdx
     dec  rcx
     jmp  .find_close
 .unterm:
-    cmp  bl, '"'
+    cmp  r11b, '"'
     je   .unterm_dq
     mov  eax, ENVFILE_ERR_SINGLE_QUOTE_UNTERMINATED
     jmp  .ret
@@ -276,6 +276,8 @@ envfile_parse_strict:
     mov  [r8 + 8], rbx
     mov  [r8 + 16], r12
     mov  [r8 + 24], r13
+    mov  [r8 + 32], r9
+    mov  [r8 + 40], r10
     mov  eax, ENVFILE_OK
     jmp  .ret
 
@@ -329,35 +331,13 @@ envfile_parse_native:
     sub  rbx, rdi               ; key len
     test rbx, rbx
     jz   .empty_key_n
-    movzx ecx, byte [rdi]
-    cmp  cl, '_'
-    je   .key_rest_n
-    cmp  cl, 'A'
-    jb   .key_invalid_n
-    cmp  cl, 'Z'
-    ja   .key_invalid_n
-
-.key_rest_n:
-    mov  rcx, rbx
-    dec  rcx
-    mov  rdx, rdi
-    inc  rdx
-.key_loop_n:
-    test rcx, rcx
-    jz   .ok_n
-    movzx eax, byte [rdx]
-    JIF_UPPER_DIGIT_UNDER .key_next_n
-    jmp  .key_invalid_n
-.key_next_n:
-    inc  rdx
-    dec  rcx
-    jmp  .key_loop_n
-
 .ok_n:
     lea  r12, [rdi + rbx + 1]
     mov  r13, rsi
     sub  r13, rbx
     dec  r13
+    mov  r9,  r12               ; raw value ptr
+    mov  r10, r13               ; raw value len
     test r13, r13
     jz   .write_n
     mov  rcx, r13
@@ -375,15 +355,13 @@ envfile_parse_native:
     mov  [r8 + 8], rbx
     mov  [r8 + 16], r12
     mov  [r8 + 24], r13
+    mov  [r8 + 32], r9
+    mov  [r8 + 40], r10
     mov  eax, ENVFILE_OK
     jmp  .ret_n
 
 .empty_key_n:
     mov  eax, ENVFILE_ERR_EMPTY_KEY
-    jmp  .ret_n
-
-.key_invalid_n:
-    mov  eax, ENVFILE_ERR_KEY_INVALID
     jmp  .ret_n
 
 .bad_value_n:

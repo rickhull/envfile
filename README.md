@@ -4,210 +4,200 @@
 
 Current scopes:
 
-- `strict/` — the mature strict format and multi-implementation validator suite
-- `native/` — a planned POSIX-native, byte-oriented format
+- `shell/` — shell-oriented format with quoting discipline; no interpolation, no `export` prefix
+- `native/` — POSIX-native, byte-oriented format (`KEY=VALUE`, `\n`-terminated, three special bytes: `=`, `\n`, `\0`)
 - `compat/` — reserved for a possible future relaxed format
-- `corpus/` — a top-level real-world corpus shared across formats
+- `corpus/` — sanitized real-world `.env` files shared across formats
 
-Shared implementation infrastructure currently lives at the repo root:
+## Pipeline
 
-- `bin/` — one executable entry per implementation
-- `src/` — implementation sources
-- `Makefile` — primary native build graph with incremental rebuilds
-- `make` — `just` wrapper for `make all`
-- `now` — `just` wrapper for `make now` (`snappy` builds)
-- `fast` — `just` wrapper for `make fast` (optimized binaries)
-- `nullscan` — awk file-gate helper; `make nullscan` can overwrite it with the C build locally
-- `fresh` — `just` wrapper for `make fresh` (restores bootstrap symlinks)
-- `clean` — `just` wrapper for `make clean`
-- `impl.just` — shared implementation activation/probing
-- `bench.just` — shared benchmark helpers
+Five actions form a pipeline: `normalize → validate → dump → delta → apply`.
+Each action implicitly runs all prior stages. See [docs/PIPELINE.md](docs/PIPELINE.md)
+for stage contracts, format matrix, config surface, and implementation guidance.
 
-The Makefile also exposes `make now` and `make fast` as mode selectors for the
-same build graph. `fast` is the default. Mode changes update the cached build
-stamps under `.make/` and rebuild the final `bin/` outputs when the selected
-flags differ. `now` biases toward faster compilation; `fast` biases toward
-optimized binaries.
+Normalize pass configuration (all formats unless noted):
 
-The current center of gravity is `strict/`. `native/` is being prepared as its
-own workspace rather than being forced into strict’s assumptions too early.
+| Variable | Values | Default | Formats |
+|---|---|---|---|
+| `ENVFILE_BOM` | `reject` `warn` `strip` | `warn` | shell, compat |
+| `ENVFILE_CRLF` | `strip` `ignore` | `ignore` | all |
+| `ENVFILE_NUL` | `reject` `ignore` | `reject` | all |
+| `ENVFILE_BACKSLASH_CONTINUATION` | `accept` `ignore` | `ignore` | shell, compat |
 
-Committed validator outputs are code-first: `ERROR_*` values are emitted as
-`CODE: file:line`.
+`ENVFILE_CRLF=strip` uses a whole-file scan: strips `\r` only if every line
+ends `\r\n`; mixed files are left untouched.
 
-## Repo shape
+## Testing
 
-- [strict/README.md](strict/README.md) — strict format, implementations, and workflow
-- [strict.just](strict.just) — strict workflow entry point
-- [native/README.md](native/README.md) — native format workspace
-- [native.just](native.just) — native workflow entry point
-- [compat/README.md](compat/README.md) — compat placeholder
-- [compat.just](compat.just) — compat placeholder entry point
-- [corpus/README.md](corpus/README.md) — shared real-world corpus pipeline
+`bin/envfile.awk` is the canonical reference implementation. All other
+implementations are verified against its output. It runs with `LC_ALL=C` (via
+shebang) so byte-level behavior — BOM detection, high-byte handling — is
+locale-independent.
+
+Verification is fixture-driven. Each format module owns its full fixture tree:
+
+```
+shell/accepted/     — valid shell assignments
+shell/rejected/     — invalid shell assignments (every line triggers an error)
+shell/mixed/        — interleaved valid and invalid lines
+shell/normalize/    — normalize-pass inputs (BOM, CRLF, NUL, continuation)
+native/accepted/    — valid native assignments
+native/rejected/    — invalid native assignments
+native/normalize/   — normalize-pass inputs (CRLF, NUL)
+native/delta/       — delta-action inputs and expected outputs
+native/apply/       — apply-action inputs and expected outputs
+```
+
+Reference outputs are sidecar files committed next to each fixture:
+
+- `.err` — expected stderr (diagnostics + summary line `N checked, N errors`)
+- `.out` — expected stdout (emitted records)
+- **Absent file = assertion of empty content.** A missing `.out` means stdout
+  must be empty.
+
+For normalize fixtures, which require different `ENVFILE_*` options per test
+case, sidecars are named `<base>.<mode-label>.err` and `<base>.<mode-label>.out`:
+
+```
+shell/normalize/bom.BOM=warn.err
+shell/normalize/crlf.CRLF=strip.out
+native/normalize/nul.NUL=ignore.out
+```
+
+Run the full verification suite:
+
+```sh
+just shell::verify              # all shell fixtures: accepted, rejected, mixed
+just shell::verify-normalize    # shell normalize fixtures (11 fixture × mode combos)
+just native::verify             # all native fixtures: accepted, rejected
+just native::verify-normalize   # native normalize fixtures (8 fixture × mode combos)
+just native::verify-apply       # native apply fixtures
+just shell::check-bash          # semantic cross-check: bash must agree on accepted values
+```
+
+All recipes accept an optional implementation argument:
+
+```sh
+just shell::verify bin/envfile.c
+just native::verify-normalize bin/envfile.awk bin/envfile.c
+```
+
+Regenerate golden files after intentional behavior changes, then review
+the diff before committing:
+
+```sh
+just regen               # regenerate all golden files
+just shell::regen        # shell only
+just native::regen       # native only
+just native::regen-apply # native apply only
+```
 
 ## Quick start
 
-Strict:
+```sh
+just impls         # check which implementations are available
+make all           # build all compiled implementations
+just test          # run the full test suite against the reference implementation
+```
+
+## Dispatcher
+
+`bin/envfile` is the POSIX `sh` entry point and the primary interface to the
+repo. It resolves configuration, selects an implementation, and execs it with
+all config forwarded as `ENVFILE_*` env vars.
 
 ```sh
-just impl::activate
-just make
-just strict::validate
-just strict::normalize
-just strict::verify
+bin/envfile format=shell action=dump shell/accepted/accepted.env
+bin/envfile format=native action=validate native/accepted/ascii.env
+bin/envfile format=shell action=normalize config=myconfig.env shell/normalize/bom.env
 ```
 
-Corpus:
+**Configuration channels**, resolved in priority order (later wins):
+
+1. `config=path` — a native-format file; behavior knobs only (`BOM=`, `CRLF=`,
+   `NUL=`, `BACKSLASH_CONTINUATION=`); everything else silently ignored
+2. `ENVFILE_*` env vars — already in the caller's environment; fill gaps left
+   by the config file
+3. ARGV `key=value` — routing only: `format=`, `language=`, `action=`,
+   `config=`, `env=`; behavior knobs are not accepted on ARGV
+
+By the time an implementation is invoked, all configuration is resolved and
+forwarded as env vars. Implementations read env vars only — no ARGV parsing,
+no config file reading.
+
+Format-gating: `ENVFILE_BOM` and `ENVFILE_BACKSLASH_CONTINUATION=accept` are
+fatal errors for `format=native`.
+
+Default implementation search order: `awk`, then `perl`/`bash`/`python`/`sh`
+for shell; `awk`, `c`, `go`, `zig`, `bash`, `sh`, `perl` for native.
+
+## Implementations
+
+Each implementation lives at `bin/envfile.<suffix>` (interpreted) or is built
+from `src/<language>/` (compiled):
+
+| Suffix | Language | Type |
+|---|---|---|
+| `.awk` | AWK | interpreted — reference impl |
+| `.c` | C | compiled — C backend |
+| `.asm` | C + x86-64 ASM | compiled — ASM backend |
+| `.go` | Go | compiled |
+| `.rs` | Rust | compiled |
+| `.zig` | Zig | compiled |
+| `.py` | Python | interpreted |
+| `.pl` | Perl | interpreted |
+| `.rb` | Ruby | interpreted |
+| `.bash` | Bash | interpreted |
+| `.sh` | POSIX sh | interpreted |
+| `.nu` | Nushell | interpreted |
+| `.node.js` | Node.js | interpreted |
+| `.bun.js` | Bun | interpreted |
+| `.deno.js` | Deno | interpreted |
+
+The C build uses a pluggable backend: `src/c/envfile.c` is the shared
+front-end; `src/c/backend.c` or `src/c/backend.asm` is selected at link time.
+
+`bin/lang <lang> envfile` resolves the repo executable path for a language.
+
+## Build
 
 ```sh
-just corpus::generate
+make all          # build all compiled implementations
+make c            # build just bin/envfile.c
+make asm          # build bin/envfile.asm (C front-end + ASM backend)
+make now          # fast compilation, unoptimized (-O0)
+make fast         # optimized binaries (-O2, default)
+make clean        # remove bin/ outputs and .make/ stamps
 ```
 
-Bench:
+## Benchmark
+
+`bin/bench` and `bin/nullscan` are built by `make all`. To build individually:
+`make bench`, `make nullscan`.
 
 ```sh
-make nullscan
-just bench::run
-just bench::strict
-just bench::native
-just bench::corpus
-just bench::strict_corpus
-just bench::native_corpus
-just bench::nullscan
+just bench::run       # run benchmark binary
+just bench::shell     # shell-format benchmarks
+just bench::native    # native-format benchmarks
+just bench::corpus    # benchmark over corpus files
 ```
-
-## Implementation naming
-
-Implementation entries are being normalized around a derived naming rule.
-
-The top-level `bin/envfile` is the general POSIX `sh` entry point. It parses
-leading `format=`, `language=`, and `action=` key/value arguments, defaults to
-`format=strict` and `action=validate`, and uses `awk` by default with `perl`,
-`bash`, `python`, and `sh` as fallback validators when no language is
-specified.
-
-It does not fundamentally depend on `mise` or any other package manager.
-Some implementation backends may use `mise` for tool availability, but the
-dispatcher itself stays self-contained.
-
-Right now, `native` routes through the native-capable backends, with `awk`
-first, and `perl`, `bash`, and `sh` as pragmatic line-oriented options;
-`compat` still routes to the strict baseline.
-
-Example:
-
-```sh
-bin/envfile format=strict action=normalize strict/accepted.env
-```
-
-The executable suffix is derived by a small built-in table:
-
-- `bash` -> `bin/envfile.bash`
-- `python` -> `bin/envfile.py`
-- `perl` -> `bin/envfile.pl`
-- `nushell` -> `bin/envfile.nu`
-- `sh` -> `bin/envfile.sh`
-- `ruby` -> `bin/envfile.rb`
-- `rust` -> `bin/envfile.rs`
-
-Qualified language keys remain qualified:
-
-- `node.js` -> `bin/envfile.node.js`
-- `bun.js` -> `bin/envfile.bun.js`
-- `deno.js` -> `bin/envfile.deno.js`
-
-Binary entry:
-
-```text
-bin/envfile.<suffix>
-```
-
-Source location:
-
-```text
-runtime = interpreted -> same as binary entry
-runtime = native      -> src/<language>/
-```
-
-Examples for binary entry:
-
-- `bin/envfile.bash`
-- `bin/envfile.py`
-- `bin/envfile.pl`
-- `bin/envfile.nu`
-- `bin/envfile.rb`
-- `bin/envfile.c`
-- `bin/envfile.rs`
-- `bin/envfile.node.js`
-
-The C build is the readable reference path; `bin/envfile.asm` is the optional
-asm-backed variant built from the same repo contract in `src/c/`.
-
-For native implementations, source location is derived from the same key under
-`src/`. For interpreted implementations, the entry script is itself the
-source.
-
-`impl.just` stays intentionally explicit so the activation path does not need
-to parse the registry a second time.
-
-## Implementation Shape
-
-The C path is structured as a small front-end with a swappable backend:
-
-- `src/c/envfile.c` owns file I/O, buffering, counting, and output formatting.
-- `src/c/backend.c` is the default C parser backend.
-- `src/c/backend.asm` is the optional backend that is linked in for
-  `bin/envfile.asm`.
-
-This is the repo's reference example of "pluggable vibes": one stable C
-surface, with the parser backend chosen at build/link time instead of by source
-replacement.
-
-## What strict is
-
-`.env` is not a standard. Shells, Docker, `dotenv` libraries, Kubernetes
-secret loaders, and CI systems all parse it differently.
-
-`envfile/strict` defines a strict, minimal subset: one assignment per line, no
-interpolation, no variable references, no command substitution, no `export`
-prefix. It is backed by multiple independent implementations and committed
-reference outputs.
-
-For the full strict format and workflow, see [strict/README.md](strict/README.md).
-
-## What native is
-
-`envfile/native` aims to represent a POSIX-style environment as directly as
-possible: literal `KEY=VALUE` records, `\n`-terminated lines, no shell
-interpretation layer, and only three special bytes: `=`, `\n`, and `\0`.
-File-level NUL rejection is handled before the parser runs.
-
-For the current draft, see [native/README.md](native/README.md).
 
 ## Corpus
 
-`corpus/` is not owned by `strict`. It is shared input material: sanitized
-real-world files used to observe validator behavior and to benchmark against
-larger, more varied inputs.
+`corpus/` holds sanitized real-world `.env` files used for validation and
+benchmarking. No format is expected to accept any particular fraction.
 
-`strict` is currently used for corpus acceptance, but no format is expected to
-accept any particular fraction of the corpus.
-
-See [corpus/README.md](corpus/README.md).
+```sh
+just corpus::generate    # explore → filter → collect pipeline
+```
 
 ## Additional docs
 
-- [docs/STRATEGY.md](docs/STRATEGY.md) — adoption and standardization strategy notes
-- [docs/DATA_GATHERING.md](docs/DATA_GATHERING.md) — ideas for collecting real-world env files
-- [docs/BENCHMARK_JITTER.md](docs/BENCHMARK_JITTER.md) — benchmarking noise and mitigation
-- [docs/planning/COLLAPSE_ALGO.md](docs/planning/COLLAPSE_ALGO.md) — corpus collapse algorithm notes
-
-## Tooling note
-
-`strict/` owns the strict format and fixtures. `bin/` and `src/` are shared
-repo-level implementation infrastructure, so a single implementation entry can
-eventually handle `strict`, `native`, or `compat`.
+- [docs/PIPELINE.md](docs/PIPELINE.md) — full pipeline spec
+- [docs/TERMINOLOGY.md](docs/TERMINOLOGY.md) — glossary
+- [docs/STRATEGY.md](docs/STRATEGY.md) — adoption and standardization notes
+- [docs/BENCHMARK_JITTER.md](docs/BENCHMARK_JITTER.md) — benchmarking noise notes
 
 ## License
 
-MIT
+MIT — see [LICENSE](LICENSE)

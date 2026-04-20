@@ -17,7 +17,7 @@ rg_files := "rg --files --no-messages --no-ignore --hidden --one-file-system"
 #
 # Generation composes three stages:
 #   1. explore  — find candidate files (by directory walk, systemd refs, or filename patterns)
-#   2. filter   — lint each candidate, keep those passing size-tiered acceptance thresholds
+#   2. filter   — validate each candidate, keep those passing size-tiered acceptance thresholds
 #   3. collect  — sanitize sensitive lines, copy to corpus/files/ (chroot layout), score source dirs
 #
 # Explore recipes accumulate into `corpus/explored.txt`; `generate` runs the
@@ -174,7 +174,7 @@ explore_systemd:
 
 # --- Filter ------------------------------------------------------------------
 
-# Filter explored paths through the strict acceptance linter.
+# Filter explored paths through the native format validator.
 filter:
   #!/usr/bin/env python3
   import os, re, subprocess, sys
@@ -182,11 +182,19 @@ filter:
   explored_file = "{{explored_file}}"
   filtered_file = "{{filtered_file}}"
 
-  for linter in ("bin/envfile.asm", "bin/envfile.c", "bin/envfile.zig"):
-    if os.access(linter, os.X_OK):
-      break
-  else:
-    print("filter: \tno native linter found — run `make c` or similar", file=sys.stderr)
+  def find_validator():
+    result = subprocess.run(["bin/lang", "list", "built"], capture_output=True, text=True)
+    for lang in result.stdout.splitlines():
+      r = subprocess.run(["bin/lang", lang, "envfile"], capture_output=True, text=True)
+      if r.returncode == 0:
+        path = r.stdout.strip()
+        if os.access(path, os.X_OK):
+          return path
+    return None
+
+  validator = find_validator()
+  if validator is None:
+    print("filter: \tno native validator found — run `make c` or similar", file=sys.stderr)
     raise SystemExit(1)
 
   summary_re  = re.compile(r"(\d+) checked, (\d+) errors, (\d+) warnings")
@@ -216,7 +224,7 @@ filter:
       if path in seen_logical:
         skipped += 1
         continue
-      r = subprocess.run([linter, path], capture_output=True)
+      r = subprocess.run([validator, path], capture_output=True)
       output = r.stderr.decode("utf-8", errors="replace") + r.stdout.decode("utf-8", errors="replace")
       m = summary_re.search(output)
       if not m:
@@ -235,7 +243,7 @@ filter:
       out.write(path + "\n")
       accepted += 1
 
-  msg = f"Accepted {accepted} files, {linter} skipped {skipped}"
+  msg = f"Accepted {accepted} files, {validator} skipped {skipped}"
   print(f"filter: \t{msg}")
   print(f"\t\tWrote {filtered_file}")
 

@@ -1,0 +1,8 @@
+A=alpha
+BRACED=/home/user/bin
+CHAIN=alpha:/home/user:/usr/local/bin:/usr/bin:/bin
+HOME=/home/user
+LITERAL=$/home/user
+PATH=/usr/local/bin:/usr/bin:/bin
+PRICE=$9
+SELF=

@@ -14,7 +14,7 @@ use constant ERROR_SINGLE_QUOTE_UNTERMINATED => "ERROR_SINGLE_QUOTE_UNTERMINATED
 use constant ERROR_TRAILING_CONTENT          => "ERROR_TRAILING_CONTENT";
 use constant ERROR_VALUE_INVALID_CHAR        => "ERROR_VALUE_INVALID_CHAR";
 
-my $format = $ENV{ENVFILE_FORMAT} // 'strict';
+my $format = $ENV{ENVFILE_FORMAT} // 'shell';
 my $action = $ENV{ENVFILE_ACTION} // 'validate';
 my ($checked, $errors) = (0, 0);
 
@@ -107,7 +107,7 @@ sub lint_native {
     print STDERR $diag;
 }
 
-sub strict_parse {
+sub shell_parse {
     my ($file, $line_no, $line) = @_;
 
     return if $line =~ /^\s*$/;
@@ -131,6 +131,10 @@ sub strict_parse {
     }
     if ($v =~ /^\s/) {
         error($file, $line_no, ERROR_VALUE_LEADING_WHITESPACE);
+        return;
+    }
+    if ($k eq '') {
+        error($file, $line_no, ERROR_EMPTY_KEY);
         return;
     }
     if ($k !~ /^[A-Za-z_][A-Za-z0-9_]*$/) {
@@ -173,7 +177,7 @@ sub strict_parse {
     print "$k=$value\n" if $action eq 'normalize';
 }
 
-sub lint_strict {
+sub lint_shell {
     my ($files) = @_;
 
     for my $f (@$files) {
@@ -197,7 +201,7 @@ sub lint_strict {
                 $checked++;
                 next;
             }
-            strict_parse($f, $n, $line);
+            shell_parse($f, $n, $line);
         }
     }
 
@@ -209,7 +213,7 @@ my @files = @ARGV ? @ARGV : ('-');
 if ($format eq 'native') {
     lint_native(\@files, $action eq 'normalize');
 } else {
-    lint_strict(\@files);
+    lint_shell(\@files);
 }
 
 exit 1 if $errors;

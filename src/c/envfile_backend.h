@@ -20,12 +20,14 @@ typedef enum {
 
 typedef struct {
     const unsigned char *key;
-    size_t key_len;
-    const unsigned char *value;
-    size_t value_len;
+    size_t               key_len;
+    const unsigned char *value;      /* parsed: quotes stripped */
+    size_t               value_len;
+    const unsigned char *raw_value;  /* literal: as written in file */
+    size_t               raw_value_len;
 } EnvfileRecord;
 
-EnvfileStatus envfile_parse_strict(
+EnvfileStatus envfile_parse_shell(
     const unsigned char *line, size_t len, EnvfileRecord *out
 );
 

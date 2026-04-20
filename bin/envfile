@@ -5,9 +5,24 @@ set -eu
 
 script_dir=$(CDPATH= cd "$(dirname "$0")" && pwd)
 
-format=strict
+format=shell
 language=
 action=validate
+config=
+envfile=
+
+# behavior knobs — empty means "use impl default"
+envfile_bom=
+envfile_crlf=
+envfile_nul=
+envfile_backslash_continuation=
+
+fatal_error() {
+  code=$1
+  shift
+  printf '%s: %s: %s\n' "$0" "$code" "$*" >&2
+  exit 1
+}
 
 is_word() {
   case $1 in
@@ -34,123 +49,63 @@ is_language() {
   return 1
 }
 
-varname_for() {
-  printf '%s' "$1" | tr '[:lower:].-' '[:upper:]__'
-}
-
-suffix_for() {
-  case $1 in
-    awk|bash|c|go|sh|zig|asm) printf '%s\n' "$1" ;;
-    perl) printf '%s\n' pl ;;
-    python) printf '%s\n' py ;;
-    ruby) printf '%s\n' rb ;;
-    rust) printf '%s\n' rs ;;
-    nushell) printf '%s\n' nu ;;
-    node.js) printf '%s\n' node.js ;;
-    bun.js) printf '%s\n' bun.js ;;
-    deno.js) printf '%s\n' deno.js ;;
-    *) return 1 ;;
-  esac
-}
-
-normalize_language_ok() {
-  case $1 in
-    awk|bash|perl|sh) return 0 ;;
-    *) return 1 ;;
-  esac
-}
-
-validate_language_ok() {
-  case $1 in
-    awk|bash|perl|sh) return 0 ;;
-    *) return 1 ;;
-  esac
-}
-
-known_language() {
-  case $1 in
-    awk|bash|c|go|nushell|perl|python|ruby|rust|sh|zig|asm|node.js|bun.js|deno.js) return 0 ;;
-    *) return 1 ;;
-  esac
-}
+validate_bom()                    { case $1 in reject|warn|strip) ;; *) fatal_error FATAL_ERROR_BAD_ENVFILE_VALUE "ENVFILE_BOM=$1";; esac; }
+validate_crlf()                   { case $1 in strip|ignore)     ;; *) fatal_error FATAL_ERROR_BAD_ENVFILE_VALUE "ENVFILE_CRLF=$1";; esac; }
+validate_nul()                    { case $1 in reject|ignore)     ;; *) fatal_error FATAL_ERROR_BAD_ENVFILE_VALUE "ENVFILE_NUL=$1";; esac; }
+validate_backslash_continuation() { case $1 in accept|ignore)    ;; *) fatal_error FATAL_ERROR_BAD_ENVFILE_VALUE "ENVFILE_BACKSLASH_CONTINUATION=$1";; esac; }
 
 choose_impl() {
   fmt=$1
   lang=$2
-  act=$3
 
   if [ -n "$lang" ]; then
-    known_language "$lang" || return 1
-    if [ "$fmt" = native ]; then
-      case $lang in
-        awk|bash|c|go|perl|python|rust|sh|zig) ;;
-        *) return 1 ;;
-      esac
-    elif [ "$act" = normalize ]; then
-      normalize_language_ok "$lang" || return 1
-    else
-      validate_language_ok "$lang" || return 1
-    fi
-    suf=$(suffix_for "$lang") || return 1
-    impl=$script_dir/envfile.$suf
-    [ -x "$impl" ] || return 1
+    impl=$("$script_dir/lang" "$lang" envfile 2>/dev/null) || return 1
     printf '%s\n' "$impl"
     return 0
   fi
 
-  if [ "$act" = normalize ]; then
-    case $fmt in
-      native) set -- awk c go zig bash sh perl ;;
-      strict|compat) set -- awk perl bash sh ;;
-    esac
-  else
-    case $fmt in
-      native) set -- awk c go zig bash sh perl ;;
-      strict|compat) set -- awk perl bash python sh ;;
-    esac
-  fi
+  case $fmt in
+    native) set -- awk c go zig bash sh perl ;;
+    shell|compat) set -- awk perl bash python sh ;;
+  esac
 
   for lang in "$@"; do
-    suf=$(suffix_for "$lang") || continue
-    impl=$script_dir/envfile.$suf
-    if [ -x "$impl" ]; then
-      printf '%s\n' "$impl"
-      return 0
-    fi
+    impl=$("$script_dir/lang" "$lang" envfile 2>/dev/null) || continue
+    printf '%s\n' "$impl"
+    return 0
   done
 
   return 1
 }
 
+# Parse ARGV — routing and envfile channels only
 while [ $# -gt 0 ]; do
   case $1 in
     format=*)
       format=${1#format=}
-      is_word "$format" || {
-        printf '%s: invalid format: %s\n' "$0" "$format" >&2
-        exit 1
-      }
+      is_word "$format" || fatal_error FATAL_ERROR_BAD_ARG "format=$format"
       ;;
     language=*)
       language=${1#language=}
-      is_language "$language" || {
-        printf '%s: invalid language: %s\n' "$0" "$language" >&2
-        exit 1
-      }
+      is_language "$language" || fatal_error FATAL_ERROR_BAD_ARG "language=$language"
       ;;
     action=*)
       action=${1#action=}
       case $action in
-        validate|normalize) ;;
-        *)
-          printf '%s: unsupported action: %s\n' "$0" "$action" >&2
-          exit 1
-          ;;
+        normalize|validate|dump|delta|apply) ;;
+        *) fatal_error FATAL_ERROR_BAD_ARG "action=$action" ;;
       esac
       ;;
+    config=*)
+      config=${1#config=}
+      [ -f "$config" ] || fatal_error FATAL_ERROR_NOT_FOUND "file=$config"
+      ;;
+    env=*)
+      envfile=${1#env=}
+      [ -f "$envfile" ] || fatal_error FATAL_ERROR_NOT_FOUND "file=$envfile"
+      ;;
     [A-Za-z_][A-Za-z0-9_]*=*)
-      printf '%s: unsupported setting: %s\n' "$0" "$1" >&2
-      exit 1
+      fatal_error FATAL_ERROR_BAD_ARG "setting=$1"
       ;;
     *)
       break
@@ -160,27 +115,57 @@ while [ $# -gt 0 ]; do
 done
 
 case $format in
-  strict|native|compat) ;;
+  shell|native|compat) ;;
   *)
-    printf '%s: unsupported format: %s\n' "$0" "$format" >&2
-    exit 1
+    fatal_error FATAL_ERROR_UNSUPPORTED "format=$format"
     ;;
 esac
 
-impl=$(choose_impl "$format" "$language" "$action") || {
+# Load behavior knobs from config file (mined silently; known values validated)
+if [ -n "$config" ]; then
+  while IFS= read -r line; do
+    case $line in
+      BOM=*)                    v=${line#BOM=};                    validate_bom "$v";                    envfile_bom=$v ;;
+      CRLF=*)                   v=${line#CRLF=};                   validate_crlf "$v";                   envfile_crlf=$v ;;
+      NUL=*)                    v=${line#NUL=};                    validate_nul "$v";                    envfile_nul=$v ;;
+      BACKSLASH_CONTINUATION=*) v=${line#BACKSLASH_CONTINUATION=}; validate_backslash_continuation "$v"; envfile_backslash_continuation=$v ;;
+    esac
+  done < <(ENVFILE_FORMAT=native ENVFILE_ACTION=dump "$script_dir/envfile.awk" "$config" 2>/dev/null)
+fi
+
+# POSIX env vars override config file (already in environment; only fill gaps)
+[ -z "$envfile_bom" ]                    && [ -n "${ENVFILE_BOM:-}" ]                    && { validate_bom "$ENVFILE_BOM";                                       envfile_bom=$ENVFILE_BOM; }
+[ -z "$envfile_crlf" ]                   && [ -n "${ENVFILE_CRLF:-}" ]                   && { validate_crlf "$ENVFILE_CRLF";                                     envfile_crlf=$ENVFILE_CRLF; }
+[ -z "$envfile_nul" ]                    && [ -n "${ENVFILE_NUL:-}" ]                    && { validate_nul "$ENVFILE_NUL";                                       envfile_nul=$ENVFILE_NUL; }
+[ -z "$envfile_backslash_continuation" ] && [ -n "${ENVFILE_BACKSLASH_CONTINUATION:-}" ] && { validate_backslash_continuation "$ENVFILE_BACKSLASH_CONTINUATION"; envfile_backslash_continuation=$ENVFILE_BACKSLASH_CONTINUATION; }
+
+# Format-gating: some passes are not applicable to all formats
+if [ "$format" = "native" ]; then
+  [ -n "$envfile_bom" ] && fatal_error FATAL_ERROR_UNSUPPORTED "format=native ENVFILE_BOM=$envfile_bom"
+  [ "$envfile_backslash_continuation" = "accept" ] && fatal_error FATAL_ERROR_UNSUPPORTED "format=native ENVFILE_BACKSLASH_CONTINUATION=accept"
+fi
+
+impl=$(choose_impl "$format" "$language") || {
   if [ -n "$language" ]; then
-    printf '%s: unavailable language: %s\n' "$0" "$language" >&2
+    fatal_error FATAL_ERROR_UNSUPPORTED "language=$language"
   else
-    printf '%s: no strict implementation available\n' "$0" >&2
+    fatal_error FATAL_ERROR_UNSUPPORTED "implementation=none"
   fi
-  exit 1
 }
 
-case $format:$impl in
-  native:*/envfile.awk)
-    exec env LC_ALL=C ENVFILE_FORMAT=$format ENVFILE_ACTION=$action "$impl" "$@"
+# Build env prefix for impl invocation
+envp="env ENVFILE_FORMAT=$format ENVFILE_ACTION=$action"
+[ -n "$envfile" ]              && envp="$envp ENVFILE_ENV=$envfile"
+[ -n "$envfile_bom" ]                    && envp="$envp ENVFILE_BOM=$envfile_bom"
+[ -n "$envfile_crlf" ]                   && envp="$envp ENVFILE_CRLF=$envfile_crlf"
+[ -n "$envfile_nul" ]                    && envp="$envp ENVFILE_NUL=$envfile_nul"
+[ -n "$envfile_backslash_continuation" ] && envp="$envp ENVFILE_BACKSLASH_CONTINUATION=$envfile_backslash_continuation"
+
+case $impl in
+  */envfile.awk)
+    exec $envp LC_ALL=C "$impl" "$@"
     ;;
   *)
-    exec env ENVFILE_FORMAT=$format ENVFILE_ACTION=$action "$impl" "$@"
+    exec $envp "$impl" "$@"
     ;;
 esac

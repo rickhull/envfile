@@ -24,10 +24,10 @@ fn is_native_key_start(b: u8) -> bool {
 fn is_native_key_rest(b: u8) -> bool {
     matches!(b, b'A'..=b'Z' | b'0'..=b'9' | b'_')
 }
-fn is_strict_key_start(b: u8) -> bool {
+fn is_shell_key_start(b: u8) -> bool {
     b.is_ascii_alphabetic() || b == b'_'
 }
-fn is_strict_key_rest(b: u8) -> bool {
+fn is_shell_key_rest(b: u8) -> bool {
     b.is_ascii_alphanumeric() || b == b'_'
 }
 fn is_bad_val(b: u8) -> bool {
@@ -41,9 +41,9 @@ fn valid_native_key(k: &[u8]) -> bool {
     }
 }
 
-fn valid_strict_key(k: &str) -> bool {
+fn valid_shell_key(k: &str) -> bool {
     let mut chars = k.bytes();
-    chars.next().map_or(false, is_strict_key_start) && chars.all(is_strict_key_rest)
+    chars.next().map_or(false, is_shell_key_start) && chars.all(is_shell_key_rest)
 }
 
 // --- counts ---
@@ -205,7 +205,7 @@ fn lint_native(
     }
 }
 
-// --- strict core: line-oriented ---
+// --- shell core: line-oriented ---
 
 struct LineResult<'a> {
     diag: Option<&'static str>,
@@ -213,7 +213,7 @@ struct LineResult<'a> {
     val: &'a str,
 }
 
-fn strict_line(line: &str) -> LineResult<'_> {
+fn shell_line(line: &str) -> LineResult<'_> {
     if line.as_bytes().iter().any(|&b| b == 0) {
         return LineResult {
             diag: Some(ERROR_VALUE_INVALID_CHAR),
@@ -252,7 +252,14 @@ fn strict_line(line: &str) -> LineResult<'_> {
             val: "",
         };
     }
-    if !valid_strict_key(k) {
+    if k.is_empty() {
+        return LineResult {
+            diag: Some(ERROR_EMPTY_KEY),
+            fatal: true,
+            val: "",
+        };
+    }
+    if !valid_shell_key(k) {
         return LineResult {
             diag: Some(ERROR_KEY_INVALID),
             fatal: true,
@@ -307,7 +314,7 @@ fn strict_line(line: &str) -> LineResult<'_> {
     }
 }
 
-fn lint_strict(
+fn lint_shell(
     path: &str,
     diag: &mut impl Write,
     norm: &mut impl Write,
@@ -354,7 +361,7 @@ fn lint_strict(
 
         let eq = line.find('=').unwrap_or(0);
         let k = &line[..eq];
-        let r = strict_line(line);
+        let r = shell_line(line);
         if let Some(code) = r.diag {
             writeln!(diag, "{code}: {path}:{n}").ok();
             if r.fatal {
@@ -371,7 +378,7 @@ fn lint_strict(
 // --- main ---
 
 fn main() {
-    let format = std::env::var("ENVFILE_FORMAT").unwrap_or_else(|_| "strict".into());
+    let format = std::env::var("ENVFILE_FORMAT").unwrap_or_else(|_| "shell".into());
     let action = std::env::var("ENVFILE_ACTION").unwrap_or_else(|_| "validate".into());
     let native = format == "native";
     let normalize = action == "normalize";
@@ -396,7 +403,7 @@ fn main() {
         if native {
             lint_native(path, &mut diag, &mut norm, normalize, &mut c);
         } else {
-            lint_strict(path, &mut diag, &mut norm, normalize, &mut c);
+            lint_shell(path, &mut diag, &mut norm, normalize, &mut c);
         }
         total.checked += c.checked;
         total.errors += c.errors;

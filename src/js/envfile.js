@@ -45,7 +45,7 @@ function nativeLines(path, lines, norm, diag) {
   return { checked, errors };
 }
 
-function strictLines(path, lines, norm, diag) {
+function shellLines(path, lines, norm, diag) {
   let checked = 0, errors = 0;
 
   for (let i = 0; i < lines.length; i++) {
@@ -70,6 +70,7 @@ function strictLines(path, lines, norm, diag) {
     if (/^[\t ]/.test(k))        { diag.push(`${ERROR_KEY_LEADING_WHITESPACE}: ${path}:${n}\n`);   errors++; continue; }
     if (/[\t ]$/.test(k))        { diag.push(`${ERROR_KEY_TRAILING_WHITESPACE}: ${path}:${n}\n`);  errors++; continue; }
     if (v && /^[\t ]/.test(v))   { diag.push(`${ERROR_VALUE_LEADING_WHITESPACE}: ${path}:${n}\n`); errors++; continue; }
+    if (!k)                      { diag.push(`${ERROR_EMPTY_KEY}: ${path}:${n}\n`);              errors++; continue; }
     if (!KEY_RE.test(k))         { diag.push(`${ERROR_KEY_INVALID}: ${path}:${n}\n`);              errors++; continue; }
 
     if (!v) { if (norm) norm.push(`${k}=\n`); continue; }
@@ -94,7 +95,7 @@ function strictLines(path, lines, norm, diag) {
 }
 
 export function lint(files, read, opts = {}) {
-  const format    = opts.format || "strict";
+  const format    = opts.format || "shell";
   const action    = opts.action || "validate";
   const normalize = action === "normalize";
   const native    = format === "native";
@@ -110,7 +111,7 @@ export function lint(files, read, opts = {}) {
       for (let i = 0; i < lines.length; i++)
         if (lines[i].charCodeAt(lines[i].length - 1) === 13) lines[i] = lines[i].slice(0, -1);
     }
-    const fn = native ? nativeLines : strictLines;
+    const fn = native ? nativeLines : shellLines;
     const r  = fn(path, lines, norm, diag);
     totalChecked  += r.checked;
     totalErrors   += r.errors;

@@ -12,7 +12,7 @@ const ERROR_SINGLE_QUOTE_UNTERMINATED = "ERROR_SINGLE_QUOTE_UNTERMINATED"
 const ERROR_TRAILING_CONTENT          = "ERROR_TRAILING_CONTENT"
 const ERROR_VALUE_INVALID_CHAR        = "ERROR_VALUE_INVALID_CHAR"
 
-def valid_strict_key [key: string] {
+def valid_shell_key [key: string] {
   not ($key | parse --regex '^[A-Za-z_][A-Za-z0-9_]*$' | is-empty)
 }
 
@@ -60,7 +60,7 @@ def process_native [f: string, lines: list<string>, action: string] {
   {checked: $checked, errors: $errors}
 }
 
-def process_strict [f: string, lines: list<string>, action: string] {
+def process_shell [f: string, lines: list<string>, action: string] {
   mut checked = 0; mut errors = 0
 
   for item in ($lines | enumerate) {
@@ -94,7 +94,10 @@ def process_strict [f: string, lines: list<string>, action: string] {
     if ($v | str length) > 0 and (($v | str starts-with ' ') or ($v | str starts-with "\t")) {
       print -e $"($ERROR_VALUE_LEADING_WHITESPACE): ($f):($n)"; $errors += 1; continue
     }
-    if not (valid_strict_key $k) {
+    if ($k | is-empty) {
+      print -e $"($ERROR_EMPTY_KEY): ($f):($n)"; $errors += 1; continue
+    }
+    if not (valid_shell_key $k) {
       print -e $"($ERROR_KEY_INVALID): ($f):($n)"; $errors += 1; continue
     }
     if ($v | str length) == 0 {
@@ -128,7 +131,7 @@ def process_strict [f: string, lines: list<string>, action: string] {
 }
 
 def main [...files: string] {
-  let mode   = ($env.ENVFILE_FORMAT? | default "strict")
+  let mode   = ($env.ENVFILE_FORMAT? | default "shell")
   let action = ($env.ENVFILE_ACTION? | default "validate")
   let stdin_text = $in
   let files = if ($files | is-empty) { ["-"] } else { $files }
@@ -146,7 +149,7 @@ def main [...files: string] {
       process_native $f $raw_lines $action
     } else {
       let lines = $raw_lines | each { |it| $it | str trim --char "\r" }
-      process_strict $f $lines $action
+      process_shell $f $lines $action
     }
 
     $checked += $r.checked

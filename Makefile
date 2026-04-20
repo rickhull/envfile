@@ -131,7 +131,8 @@ clean:
 	rm -rf bin/envfile.go bin/envfile.zig bin/envfile.c bin/envfile.rs bin/envfile.asm bin/nullscan bin/bench $(STAMPDIR)
 
 fresh: clean
-	ln -sf pybench bin/bench
+	ln -sf bench.py bin/bench
+	ln -sf nullscan.awk bin/nullscan
 
 status:
 	@bin/lang status

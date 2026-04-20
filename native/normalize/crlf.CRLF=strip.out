@@ -1,0 +1,4 @@
+FOO=bar
+PORT=8080
+EMPTY=
+PATH=/usr/bin:/bin

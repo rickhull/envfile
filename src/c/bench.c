@@ -1,8 +1,8 @@
 /* bench.c — benchmark env validator implementations
  *
- * Globs bin/envfile.*, filters on executable bit, runs each against
- * strict/*.env or native/*.env.  Warmup: dynamic via Welford CV stability,
- * capped at 5s.
+ * Globs bin/envfile* plus bin/nullscan, filters on executable bit, runs each
+ * against shell/*.env or native/*.env.  Warmup: dynamic via Welford CV
+ * stability, capped at 5s.
  * Measurement: count iterations over ~2s window; tracks mean and minimum
  * latency.  Reports both mean- and min-based IPS with CV.
  *
@@ -18,6 +18,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <math.h>
+#include <fnmatch.h>
 #include <sched.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -37,11 +38,10 @@
 #define CV_SLOPE_THRESH   0.005         /* improvement < 0.5pp per sample = subpar */
 #define CV_THRESHOLD      0.03          /* 3%: original absolute exit still applies */
 #define IMPL_DIR       "bin"
-#define IMPL_PFX       "envfile"
-#define STRICT_DIR     "strict"
+#define SHELL_DIR      "shell"
 #define NATIVE_DIR     "native"
-#define STRICT_EXT     ".env"
-#define FORMAT_STRICT  "strict"
+#define SHELL_EXT      ".env"
+#define FORMAT_SHELL   "shell"
 #define FORMAT_NATIVE  "native"
 #define MAX_IMPLS      64
 #define MAX_SPECS      16
@@ -116,7 +116,7 @@ static void run_once(const char *impl, const char *format, char **specs, int nsp
         char **argv = malloc((extra + nspecs) * sizeof(char *));
         if (strcmp(impl, "bin/envfile") == 0) {
             argv[0] = (char *)impl;
-            argv[1] = (char *)(strcmp(format, FORMAT_NATIVE) == 0 ? "format=native" : "format=strict");
+            argv[1] = (char *)(strcmp(format, FORMAT_NATIVE) == 0 ? "format=native" : "format=shell");
             argv[2] = "action=validate";
             for (int i = 0; i < nspecs; i++) argv[3 + i] = specs[i];
             argv[3 + nspecs] = NULL;
@@ -257,28 +257,8 @@ static int cmp_str(const void *a, const void *b) {
     return strcmp(*(char **)a, *(char **)b);
 }
 
-static int impl_ok(const char *impl) {
-    return strcmp(impl, "bin/envfile") == 0 ||
-           strcmp(impl, "bin/envfile.asm") == 0 ||
-           strcmp(impl, "bin/envfile.awk") == 0 ||
-           strcmp(impl, "bin/envfile.bash") == 0 ||
-           strcmp(impl, "bin/envfile.bun.js") == 0 ||
-           strcmp(impl, "bin/envfile.c") == 0 ||
-           strcmp(impl, "bin/envfile.deno.js") == 0 ||
-           strcmp(impl, "bin/envfile.go") == 0 ||
-           strcmp(impl, "bin/envfile.node.js") == 0 ||
-           strcmp(impl, "bin/envfile.nu") == 0 ||
-           strcmp(impl, "bin/envfile.pl") == 0 ||
-           strcmp(impl, "bin/envfile.py") == 0 ||
-           strcmp(impl, "bin/envfile.rb") == 0 ||
-           strcmp(impl, "bin/envfile.rs") == 0 ||
-           strcmp(impl, "bin/envfile.sh") == 0 ||
-           strcmp(impl, "bin/envfile.zig") == 0 ||
-           strcmp(impl, "bin/nullscan") == 0;
-}
-
 int main(int argc, char *argv[]) {
-    const char *format = FORMAT_STRICT;
+    const char *format = FORMAT_SHELL;
     const char *files  = FILES_FIXTURES;
 
     for (int i = 1; i < argc; i++) {
@@ -291,7 +271,7 @@ int main(int argc, char *argv[]) {
             return 1;
         }
     }
-    if (strcmp(format, FORMAT_STRICT) != 0 && strcmp(format, FORMAT_NATIVE) != 0) {
+    if (strcmp(format, FORMAT_SHELL) != 0 && strcmp(format, FORMAT_NATIVE) != 0) {
         fprintf(stderr, "bench: unsupported format: %s\n", format);
         return 1;
     }
@@ -317,7 +297,7 @@ int main(int argc, char *argv[]) {
     } else {
         specs = malloc(MAX_SPECS * sizeof(char *));
         if (!specs) { perror("malloc"); return 1; }
-        const char *spec_dir = strcmp(format, FORMAT_NATIVE) == 0 ? NATIVE_DIR : STRICT_DIR;
+        const char *spec_dir = strcmp(format, FORMAT_NATIVE) == 0 ? NATIVE_DIR : SHELL_DIR;
         DIR *d = opendir(spec_dir);
         if (!d) {
             fprintf(stderr, "bench: cannot open %s: %s\n", spec_dir, strerror(errno));
@@ -326,8 +306,8 @@ int main(int argc, char *argv[]) {
         struct dirent *e;
         while ((e = readdir(d)) && nspecs < MAX_SPECS) {
             if (e->d_type != DT_REG) continue;
-            int nl = strlen(e->d_name), xl = strlen(STRICT_EXT);
-            if (nl <= xl || strcmp(e->d_name + nl - xl, STRICT_EXT) != 0) continue;
+            int nl = strlen(e->d_name), xl = strlen(SHELL_EXT);
+            if (nl <= xl || strcmp(e->d_name + nl - xl, SHELL_EXT) != 0) continue;
             char buf[512];
             snprintf(buf, sizeof(buf), "%s/%s", spec_dir, e->d_name);
             specs[nspecs++] = strdup(buf);
@@ -346,16 +326,11 @@ int main(int argc, char *argv[]) {
         }
         struct dirent *e;
         while ((e = readdir(d)) && nimpls < MAX_IMPLS) {
-            size_t nl = strlen(e->d_name), pl = strlen(IMPL_PFX);
             char buf[512];
             snprintf(buf, sizeof(buf), "%s/%s", IMPL_DIR, e->d_name);
             if (access(buf, X_OK) != 0) continue;
-            if (strcmp(e->d_name, "nullscan") != 0) {
-                /* require a separator after "envfile" — dot or hyphen, not end-of-string */
-                if (strncmp(e->d_name, IMPL_PFX, pl) != 0) continue;
-                if (nl <= pl || (e->d_name[pl] != '.' && e->d_name[pl] != '-')) continue;
-            }
-            if (!impl_ok(buf)) continue;
+            if (fnmatch("envfile*", e->d_name, 0) != 0 &&
+                strcmp(e->d_name, "nullscan") != 0) continue;
             impls[nimpls++] = strdup(buf);
         }
         closedir(d);

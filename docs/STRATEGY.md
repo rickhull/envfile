@@ -29,7 +29,7 @@ runtime, or package manager should be treated as authoritative.
 
 ### 1. Tight spec + tests
 
-The first durable artifact is the strict validator contract plus a test corpus
+The first durable artifact is the shell validator contract plus a test corpus
 that exercises it.
 
 The corpus matters as much as the prose. A format becomes easier to discuss

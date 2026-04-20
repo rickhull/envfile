@@ -1,38 +1,31 @@
 # native
 
-`envfile/native` is the planned POSIX-native, byte-oriented format.
+`envfile/native` is the current POSIX-native, byte-oriented format.
 
-Unlike `strict`, `native` does not need to fit itself into the assumptions of
-the current strict ecosystem. It can share as much or as little implementation
+Unlike `shell`, `native` does not need to fit itself into the assumptions of
+the current shell ecosystem. It can share as much or as little implementation
 infrastructure as is pragmatic.
 
 Current status:
 
-- starter terminal-friendly fixtures:
-  - `native/accepted/ascii.env`
-  - `native/accepted/utf8.env`
-  - `native/rejected/ascii.env`
-  - `native/rejected/utf8.env`
-- starter binary fixtures:
-  - `native/accepted/binary.env`
-  - `native/rejected/binary.env` (contains NUL bytes)
-- binary fixtures are kept as staging data for now and are not part of the
-  default `native::verify` loop
-- file-level NUL rejection is handled by `bin/nullscan`; `make nullscan` can replace it locally with the compiled helper before the parser runs
-- starter validate-mode references:
-  - `native/accepted/ascii.txt`
-  - `native/accepted/utf8.txt`
-  - `native/accepted/binary.txt`
-  - `native/rejected/ascii.txt`
-  - `native/rejected/utf8.txt`
-  - `native/rejected/binary.txt`
-- validate-mode references are code-first: `ERROR_*` are emitted as
+- accepted and rejected fixtures under `native/accepted/` and
+  `native/rejected/`
+- normalize fixtures under `native/normalize/`
+- delta fixtures under `native/delta/`
+- apply fixtures under `native/apply/`
+- binary fixtures are covered by the default `native::verify` loop and gated
+  by `bin/nullscan`
+- file-level NUL rejection is handled by `bin/nullscan`; `make nullscan` can
+  replace it locally with the compiled helper before the parser runs
+- reference outputs are committed as `.err` and `.out` sidecars next to each
+  fixture
+- validate-mode references are code-first: `LINE_ERROR_*` are emitted as
   `CODE: file:line`
 - implementation entrypoint: `native.just`
-- implementation status: scaffolding only
+- implementation status: active and covered by golden tests
 
-The fixture set is intentionally provisional. What matters right now is the
-shape of the parser contract:
+The fixture set is intentionally small. What matters right now is the shape
+of the parser contract:
 
 1. File-level
    - Can we open and read the file?
@@ -53,7 +46,7 @@ shape of the parser contract:
 4. Assignment-level
    - `KEY` must be nonempty and follow the key rules
    - `VALUE` may be empty
-   - `=VALUE` is rejected with `ERROR_EMPTY_KEY`
+   - `=VALUE` is rejected with `LINE_ERROR_EMPTY_KEY`
    - malformed assignments are rejected, not silently retained
 
 That gives us a useful vocabulary even before the fixture set is finalized:
@@ -62,26 +55,30 @@ That gives us a useful vocabulary even before the fixture set is finalized:
 - **rejected**: malformed enough to report as an error
 - **ignored**: blank or comment lines
 
-We are agnostic about the final native fixtures for now. The point is to let
-these categories guide implementation and later fixture design, not to freeze
-the corpus too early.
+These categories are for organizing the current fixture set and future edge
+cases, not for freezing the corpus prematurely.
 
 The current tool model is:
 
 - `action=validate` is the default: diagnostics go to `stderr`, exit status
   reflects success or failure, and accepted input is not echoed.
-- `action=normalize` is the canonicalizing filter: accepted lines are emitted
-  as `KEY=VALUE` on `stdout`, rejected lines are omitted from `stdout`, and
-  diagnostics still go to `stderr`.
+- `action=dump` is the filter: accepted lines are emitted as `KEY=VALUE` on
+  `stdout`, rejected lines are omitted from `stdout`, and diagnostics still
+  go to `stderr`.
 - if no files are given, the tool reads `stdin`.
 
 Native workflow entrypoints:
 
 ```sh
-just impl::activate
+just impls
 just native::validate
-just native::normalize
+just native::dump
+just native::delta
 just native::verify
+just native::verify-normalize
+just native::regen
+just native::regen-normalize
+just native::regen-delta
 ```
 
 Implementation infrastructure is shared at the repo root:
@@ -95,11 +92,11 @@ Format-specific native material lives directly in `native/`:
 
 - `native/README.md` — native format spec
 - `native/accepted/` and `native/rejected/` — fixture sets
-- `native/*.txt` under those subdirs — expected outputs
+- `native/*.err` and `native/*.out` under those subdirs — expected outputs
 
 `corpus/` remains top-level, because it is intended to be shared real-world
-material for validation and benchmarking across formats. `strict` may be used
-for corpus acceptance, but the corpus itself is not owned by `strict`.
+material for validation and benchmarking across formats. `shell` may be used
+for corpus acceptance, but the corpus itself is not owned by `shell`.
 
 ## The format
 
@@ -146,25 +143,25 @@ Only three bytes are special to the format:
 
 ### Key charset
 
-For interoperability and regular lookup behavior, keys are restricted.
+`native` follows the POSIX environment-entry model rather than shell-utility
+name syntax. The key is the name part of a `name=value` entry.
 
-`native` key syntax:
+More precisely:
 
 ```text
-[A-Z_][A-Z0-9_]*
+name=value
 ```
 
 More explicitly:
 
 - key must be non-empty
-- key must begin with an ASCII uppercase letter or underscore
-- key may otherwise contain only ASCII uppercase letters, ASCII digits, and underscore
-- lowercase is invalid in `native`
-- additional punctuation is invalid in `native`
+- key must not contain `=`
+- lowercase is allowed in `native`
+- any other name bytes are preserved literally
 - `=` is invalid in keys
 
-This matches common environment-variable practice and keeps consumer behavior
-predictable. The current implementations enforce this shape directly.
+This matches the POSIX environment model. The shell-utility uppercase subset
+is relevant to shell-oriented formats, not to `native`.
 
 ### Value charset
 
@@ -192,7 +189,7 @@ To parse a line:
 2. Ignore blank lines.
 3. Ignore lines whose first byte is `#`.
 4. For each remaining line, split at the first `=`.
-5. Validate the key against `native` key rules.
+5. Validate that the key is non-empty.
 6. Accept the remainder as the literal value.
 
 ## Examples
@@ -204,6 +201,7 @@ FOO=bar
 PORT=8080
 EMPTY=
 GREETING=hello world
+FOO BAR=baz
 JSON={"a":1}
 PATH_LIKE=/usr/local/bin:/usr/bin
 EQUALS=base64://abc=def==
@@ -215,17 +213,15 @@ Invalid:
 
 ```text
 =bar
-foo=bar
-FOO BAR=baz
 FOO
 ```
 
 Why invalid:
 
 - empty key
-- lowercase key
-- space in key
 - missing `=`
+
+The lowercase example `foo=bar` is valid in `native`.
 
 ## Design intent
 
@@ -247,14 +243,14 @@ that support comments, escaping, or substitution.
 
 ## Positioning relative to other formats
 
-- `strict`: existing envfile format with stronger syntax and policy choices
+- `shell`: existing envfile format with stronger syntax and policy choices
 - `compat`: possible future relaxed format for broader ecosystem input
 - `native`: direct POSIX-style environment serialization, literal values, and
   only three special bytes: `=`, `\n`, and `\0`
 
 A useful summary is:
 
-- `strict` optimizes for discipline
+- `shell` optimizes for discipline
 - `compat` would optimize for acceptance
 - `native` optimizes for fidelity to the underlying environment model
 

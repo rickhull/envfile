@@ -1,0 +1,23 @@
+LINE_ERROR_KEY_INVALID: shell/rejected/rejected.env:3
+LINE_ERROR_NO_EQUALS: shell/rejected/rejected.env:4
+LINE_ERROR_KEY_INVALID: shell/rejected/rejected.env:5
+LINE_ERROR_KEY_TRAILING_WHITESPACE: shell/rejected/rejected.env:6
+LINE_ERROR_KEY_INVALID: shell/rejected/rejected.env:7
+LINE_ERROR_KEY_INVALID: shell/rejected/rejected.env:8
+LINE_ERROR_EMPTY_KEY: shell/rejected/rejected.env:9
+LINE_ERROR_KEY_LEADING_WHITESPACE: shell/rejected/rejected.env:10
+LINE_ERROR_DOUBLE_QUOTE_UNTERMINATED: shell/rejected/rejected.env:11
+LINE_ERROR_SINGLE_QUOTE_UNTERMINATED: shell/rejected/rejected.env:12
+LINE_ERROR_TRAILING_CONTENT: shell/rejected/rejected.env:13
+LINE_ERROR_TRAILING_CONTENT: shell/rejected/rejected.env:14
+LINE_ERROR_VALUE_LEADING_WHITESPACE: shell/rejected/rejected.env:15
+LINE_ERROR_VALUE_INVALID_CHAR: shell/rejected/rejected.env:16
+LINE_ERROR_VALUE_INVALID_CHAR: shell/rejected/rejected.env:17
+LINE_ERROR_VALUE_INVALID_CHAR: shell/rejected/rejected.env:18
+LINE_ERROR_VALUE_INVALID_CHAR: shell/rejected/rejected.env:19
+LINE_ERROR_VALUE_INVALID_CHAR: shell/rejected/rejected.env:22
+LINE_ERROR_KEY_LEADING_WHITESPACE: shell/rejected/rejected.env:23
+LINE_ERROR_VALUE_INVALID_CHAR: shell/rejected/rejected.env:24
+LINE_ERROR_VALUE_INVALID_CHAR: shell/rejected/rejected.env:25
+LINE_ERROR_VALUE_INVALID_CHAR: shell/rejected/rejected.env:26
+22 checked, 22 errors
